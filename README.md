@@ -1,1 +1,54 @@
-# Morning-Edge
+# Morning Edge V1
+
+A phone-friendly, paper-only U.S. stock movement scanner.
+
+## What it does
+
+1. **Overnight / premarket scan**
+   - Scans a liquid U.S. stock universe rather than forcing every listed microcap into the model.
+   - Looks at gap size, premarket movement, premarket volume, normal liquidity, sector action, U.S. futures, Asia, and Europe.
+   - Optionally adds recent company news with a Finnhub API key and recent SEC filing context.
+   - Produces a ranked watchlist. This is **not** an entry signal.
+
+2. **8:45 AM Central confirmation**
+   - Waits through the first 15 minutes after the U.S. cash open.
+   - Re-ranks using opening-range position, VWAP, first-15-minute relative volume, and short-term direction.
+   - Labels each candidate **LONG**, **SHORT**, or **PASS**.
+   - It can reverse the overnight bias if the open clearly says the opposite.
+   - It will return fewer than five setups if fewer than five qualify.
+
+3. **Market-based stop and target**
+   - Stop is placed beyond nearby support/resistance with an ATR buffer.
+   - Target uses the next meaningful market level when that level gives enough reward.
+   - If the nearby level is too close, the model uses a 2R / ATR expansion target.
+   - Setup passes when R:R is below 1.5, risk is too wide, or the stop is unrealistically tight.
+
+4. **$100 paper trade**
+   - Every qualifying setup uses $100 notional for clean comparison.
+   - It logs entry, stop, target, shares, result, and dollar P/L.
+   - If stop and target both appear inside the same 1-minute candle, the logic is intentionally conservative: it counts the stop first.
+
+## Data source notes
+
+The zero-key price feed uses Yahoo Finance chart endpoints. It is useful for research and paper testing but it is not an exchange-grade execution feed. For production trading, replace it with your broker or a licensed real-time market-data feed.
+
+News scoring is optional and uses Finnhub if `FINNHUB_API_KEY` is set. SEC checks use official SEC submissions data and a descriptive `SEC_USER_AGENT`.
+
+## Deploy on Render
+
+1. Unzip this folder and upload all files to a new GitHub repository.
+2. Create a new **Web Service** in Render from that repository.
+3. Build command: `pip install -r requirements.txt`
+4. Start command: `uvicorn server:app --host 0.0.0.0 --port $PORT`
+5. Use a persistent/paid service if you want the background collector to stay awake overnight.
+6. Optional environment variables are shown in `.env.example`.
+
+## Timing
+
+- Background scan window: roughly 4:00–8:25 AM Central on weekdays.
+- Automatic confirmation: 8:45 AM Central.
+- Paper positions update through the day.
+
+## Important design choice
+
+The app intentionally does **not** promise to scan literally every U.S. ticker with a free feed. That would add thousands of illiquid/microcap names and rate-limit the data source. V1 starts with a liquid universe because the goal is tradable movement and clean paper-test results. You can override the list with `SCAN_TICKERS`.

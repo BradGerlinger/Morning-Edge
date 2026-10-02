@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: morning-edge-v1
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PAPER_DOLLARS
+        value: "100"
+      - key: MIN_RR
+        value: "1.5"
+      - key: MAX_SETUPS
+        value: "5"
+      - key: SCAN_INTERVAL_MIN
+        value: "15"
