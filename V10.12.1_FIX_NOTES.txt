@@ -1,0 +1,16 @@
+V10.12.1 LEAD-LAG FIX
+
+1. Persistent DB path fixed: server now honors EDGE_DB first, EDGE_DB_PATH second, and automatically uses /data/edge.db when /data exists.
+2. Render blueprint now explicitly sets EDGE_DB=/data/edge.db and enables lead-lag.
+3. Old 15-minute order books are pruned whenever subscriptions roll to new tickers. This prevents unbounded RAM growth.
+4. WebSocket inbound queue reduced from 4096 to 256 to bound burst memory.
+5. /api/leadlag/status now reports recording=true/false and db_path.
+
+VERIFY AFTER DEPLOY
+- Open /api/leadlag/status
+- status should be STREAMING
+- recording should become true
+- quotes_stored should increase as order-book tops change
+- db_path should be /data/edge.db when the Render disk is mounted at /data
+
+If status is RECONNECTING or error is populated, use that exact error for the next repair; do not upgrade RAM just to mask it.

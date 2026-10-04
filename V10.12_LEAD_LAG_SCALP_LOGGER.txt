@@ -1,0 +1,20 @@
+V10.12 LEAD-LAG SCALP LOGGER
+
+Research only; no real orders are submitted.
+
+Assets: BTC, ETH, SOL, XRP, DOGE, BNB, HYPE, NEAR, ZEC.
+
+Paper scalp:
+- Detects a leader move while a follower remains comparatively stale.
+- Entry uses the follower executable ask.
+- Exit uses the follower executable bid.
+- Simulates $10 risk.
+- Checkpoints: 1, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120 seconds.
+- Saves raw quote changes, candidate events, and checkpoint paper P/L.
+
+CSV exports:
+- /api/leadlag/export-events.csv
+- /api/leadlag/export-checkpoints.csv
+- /api/leadlag/export-quotes.csv
+
+The checkpoint tests are the primary no-hindsight result. The existing best-bid-in-window statistic is retained only for research. Gross paper P/L does not deduct Kalshi fees and cannot guarantee queue position or fill quality.

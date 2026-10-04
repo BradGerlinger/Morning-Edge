@@ -1,0 +1,41 @@
+15-Minute Edge — Persistent Overnight Collector
+
+UPLOAD THESE FILES TO GITHUB
+1. server.py
+2. index.html
+3. sw.js
+
+THEN IN RENDER
+1. Open the existing kalshi-15m-edge Web Service.
+2. Add a Persistent Disk.
+3. Mount path MUST be:
+   /data
+4. 1 GB is more than enough for this collector.
+5. In Environment Variables add:
+   EDGE_DB=/data/edge.db
+6. Save changes.
+7. Deploy Latest Commit.
+
+VERIFY
+Open:
+https://kalshi-15m-edge.onrender.com/api/health
+
+You want:
+- collector_running: true
+- last_brti_age_seconds: a small number (normally under 5)
+- persistent_storage: /data/edge.db
+- persisted_samples_24h: increasing over time
+
+Then open the Home Screen app. Signal Detail should show:
+- Server collector: RUNNING
+- Persistent history: ACTIVE
+
+WHAT THIS FIXES
+- BRTI samples are written to SQLite on the persistent Render disk every second.
+- The database survives app closes, browser closes, service restarts, and redeploys.
+- Up to 24 hours of raw BRTI samples are retained.
+- On startup the model reloads its latest rolling window from the database.
+- Continuity checks remain active: if collection truly stops for >5 seconds, stale and fresh data are not stitched together.
+
+IMPORTANT
+A persistent disk preserves data, but it does not manufacture missing data. If the Render service is actually down, samples during that outage cannot be reconstructed later. With an always-on paid Web Service, the collector should continue while the phone app is closed.

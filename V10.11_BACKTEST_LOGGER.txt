@@ -1,0 +1,22 @@
+15 MINUTE EDGE V10.11 — FULL-SIGNAL SETTLEMENT LOGGER
+
+WHAT CHANGED
+- BTC Value entry/qualification rules are unchanged.
+- Push notifications are still only sent for qualified VALUE trades.
+- Every recorded BTC 15-minute signal, including PASS, is now checked against the exact Kalshi ticker after settlement.
+- PASS signals do NOT count as live/paper trades in dashboard win rate or P/L.
+- New CSV columns:
+    hypothetical_result
+    hypothetical_pnl
+- outcome, settlement_source, kalshi_result, and settled_ts are populated for PASS rows after official settlement.
+- Existing historical PASS rows in the Render database are progressively backfilled through the paced settlement loop.
+- /api/stats adds:
+    all_signals_settled
+    passes_settled
+    backtest_settlement_backlog
+
+WHY
+This allows full price-window and signal-factor backtesting across rejected and accepted signals without contaminating the current strategy statistics.
+
+DEPLOYMENT
+Upload/replace the repository files with this package and redeploy on Render. Keep the existing persistent disk/database and existing Render environment variables.
