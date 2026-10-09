@@ -1,0 +1,45 @@
+MORNING EDGE V1.1 - REPAIR PACKAGE
+
+WHAT CHANGED
+- Dashboard displays live scanner status, partial progress, sample quote errors, and last attempt.
+- Overnight scan runs in a background thread and rejects duplicate requests.
+- Handles failures explicitly instead of showing an empty watchlist as a successful scan.
+- Stops treating yesterday's intraday candles as today's premarket data.
+- Bounded network concurrency (3 workers), limited expensive news/SEC enrichment.
+- 8:45 CT opening range does not include the not-yet-complete 09:45 Eastern candle.
+- Conservative Python stack: Uvicorn with standard-library asyncio/h11; Python 3.12 specified.
+- Does not expose Python files or other application files through an assets URL.
+
+TO UPDATE YOUR EXISTING GITHUB + RENDER SERVICE
+1. Save / extract this ZIP on your computer (or iPhone Files app).
+2. In the GitHub repository connected to Render, upload the extracted files into
+   the repository root, replacing the existing files with the same names. Do NOT
+   upload the ZIP itself to the repository expecting Render to run it.
+3. Do NOT upload any .db file, .env, private API keys or __pycache__ directory.
+4. In Render > Morning-Edge > Settings verify:
+   Build command: pip install -r requirements.txt
+   Start command: uvicorn server:app --host 0.0.0.0 --port $PORT --loop asyncio --http h11
+5. Redeploy AFTER the file changes are committed. Wait for the deployment to finish.
+6. Open the Morning-Edge website. Look for the new SCANNER STATUS panel.
+7. Tap RUN OVERNIGHT SCAN and watch the counter. Allow several minutes for 80+ symbols.
+8. If it says FEED ERROR, screenshot that panel and the Render logs. The actual reason
+   (e.g., Yahoo HTTP 429) will be visible. Do NOT pay for more server RAM to fix a 429.
+
+IMPORTANT LIMITATIONS
+- Yahoo Finance chart data is an unofficial no-key upstream. This package cannot
+  guarantee that Yahoo returns premarket candles to Render's server. A reliable,
+  documented market-data provider may still be required for daily trading.
+- A scanner job labeled completed means quotes were successfully read; it does NOT
+  prove the trading strategy will be profitable. Entries remain paper-only.
+- If you're scanning outside US premarket hours or on holidays, a zero-candidate
+  error is expected. We intentionally do not present yesterday's stocks as live.
+- Database defaults to temporary storage unless a persistent disk is attached.
+  To retain data overnight through deploy/restarts, attach a Render persistent
+  disk mounted at /var/data, set MORNING_EDGE_DB=/var/data/morning_edge.db,
+  and confirm it is mounted. A disk may incur extra charges. First BACK UP any
+  data from the running instance; changing DB paths does not migrate past data.
+- This ZIP deliberately EXCLUDES the original morning_edge.db file to prevent
+  accidentally overwriting live results. You may have an older DB tracked in
+  your existing GitHub repository; remove it only after preserving needed data.
+- Live data access and Render runtime availability could not be tested from this
+  offline environment. Automated tests use controlled sample responses.

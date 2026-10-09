@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: starter
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT --loop asyncio --http h11
     envVars:
       - key: PAPER_DOLLARS
         value: "100"
@@ -14,3 +14,5 @@ services:
         value: "5"
       - key: SCAN_INTERVAL_MIN
         value: "15"
+      - key: FETCH_WORKERS
+        value: "3"

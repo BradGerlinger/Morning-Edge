@@ -1,4 +1,4 @@
-# Morning Edge V1
+# Morning Edge V1.1 (Repair)
 
 A phone-friendly, paper-only U.S. stock movement scanner.
 
@@ -34,14 +34,30 @@ The zero-key price feed uses Yahoo Finance chart endpoints. It is useful for res
 
 News scoring is optional and uses Finnhub if `FINNHUB_API_KEY` is set. SEC checks use official SEC submissions data and a descriptive `SEC_USER_AGENT`.
 
+## Diagnostic improvements (V1.1)
+
+The new **SCANNER STATUS** panel reports running/completed/failed state, attempted
+symbols, successful quotes, sample provider failures, and database storage mode.
+A missing watchlist is no longer represented as a completed scan with zero stocks.
+The manual scan is non-blocking and status refreshes every five seconds.
+
+**External-feed limitation:** Yahoo Finance's unofficial chart endpoint may return
+HTTP 429/403, especially from cloud hosting. That cannot be resolved reliably by
+changing scoring filters or buying more RAM. A suitable licensed stock-data
+provider may be necessary. Scans are research/paper-only.
+
 ## Deploy on Render
 
 1. Unzip this folder and upload all files to a new GitHub repository.
 2. Create a new **Web Service** in Render from that repository.
 3. Build command: `pip install -r requirements.txt`
 4. Start command: `uvicorn server:app --host 0.0.0.0 --port $PORT`
-5. Use a persistent/paid service if you want the background collector to stay awake overnight.
-6. Optional environment variables are shown in `.env.example`.
+5. Check the new scanner status panel and API `/api/health` after deployment.
+6. For data across restarts, attach a persistent disk at `/var/data` and set
+   `MORNING_EDGE_DB=/var/data/morning_edge.db` (check pricing and back up old data).
+   A paid always-on instance alone does not make the local SQLite DB persistent.
+7. Optional environment variables are shown in `.env.example`.
+8. See `DEPLOY_STEPS.txt` for step-by-step repair installation.
 
 ## Timing
 

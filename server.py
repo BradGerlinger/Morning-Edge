@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import csv
+import logging
+import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import io
 import json
 import math
@@ -13,18 +16,21 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
-import numpy as np
 import pandas as pd
 import requests
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, StreamingResponse
 
 APP_NAME = "Morning Edge V1"
 CT = ZoneInfo("America/Chicago")
 ET = ZoneInfo("America/New_York")
 ROOT = Path(__file__).resolve().parent
-DB = Path(os.getenv("MORNING_EDGE_DB", str(ROOT / "morning_edge.db")))
+# Use a persistent Render disk when one has been attached. Never package live trade data.
+DEFAULT_DB = "/var/data/morning_edge.db" if Path("/var/data").is_dir() else "/tmp/morning_edge.db"
+DB = Path(os.getenv("MORNING_EDGE_DB", DEFAULT_DB))
+DB.parent.mkdir(parents=True, exist_ok=True)
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logger = logging.getLogger("morning-edge")
 
 PAPER_DOLLARS = float(os.getenv("PAPER_DOLLARS", "100"))
 MIN_RR = float(os.getenv("MIN_RR", "1.5"))
@@ -81,9 +87,26 @@ TICKER_SECTOR = {
 }
 
 _session = requests.Session()
-_session.headers.update({"User-Agent": "Mozilla/5.0 MorningEdge/1.0"})
+_user_agent = "Mozilla/5.0 (compatible; MorningEdge/1.1; research; noncommercial)"
+_session.headers.update({"User-Agent": _user_agent, "Accept": "application/json"})
+_request_local = threading.local()
+
+
+def _feed_session() -> requests.Session:
+    # Each worker thread owns its HTTP Session (requests.Session is not thread-safe).
+    if not hasattr(_request_local, "session"):
+        session = requests.Session()
+        session.headers.update({"User-Agent": _user_agent, "Accept": "application/json"})
+        _request_local.session = session
+    return _request_local.session
+
+
 _db_lock = threading.Lock()
 _worker_started = False
+_job_lock = threading.RLock()
+_scan_job: Dict[str, Any] = {"state": "idle", "started_at": None, "finished_at": None, "total": 0, "scanned": 0, "processed": 0, "error": None, "errors": []}
+_last_auto_bucket = None
+MAX_FETCH_WORKERS = max(1, min(5, int(os.getenv("FETCH_WORKERS", "3"))))
 
 
 def now_ct() -> datetime:
@@ -171,6 +194,17 @@ def init_db() -> None:
           price REAL,
           change_pct REAL
         );
+        CREATE TABLE IF NOT EXISTS scan_runs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          started_at TEXT NOT NULL,
+          finished_at TEXT,
+          status TEXT NOT NULL,
+          universe_count INTEGER NOT NULL DEFAULT 0,
+          processed INTEGER NOT NULL DEFAULT 0,
+          scanned INTEGER NOT NULL DEFAULT 0,
+          error TEXT,
+          errors_json TEXT
+        );
         """)
         c.commit(); c.close()
 
@@ -178,10 +212,15 @@ def init_db() -> None:
 def _yf_chart(symbol: str, period: str = "5d", interval: str = "5m", prepost: bool = True) -> pd.DataFrame:
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
     params = {"range": period, "interval": interval, "includePrePost": "true" if prepost else "false", "events": "div,splits"}
-    r = _session.get(url, params=params, timeout=10)
+    # Yahoo's no-key chart API may deny requests from hosted IPs. Report that explicitly.
+    # Do not silently substitute yesterday's close as current premarket data.
+    r = _feed_session().get(url, params=params, timeout=(4, 7))
     if not r.ok:
-        raise RuntimeError(f"Yahoo {r.status_code} for {symbol}")
-    data = r.json()["chart"]["result"]
+        raise RuntimeError(f"Yahoo Finance HTTP {r.status_code} for {symbol}")
+    payload = r.json().get("chart") or {}
+    if payload.get("error"):
+        raise RuntimeError(f"Yahoo Finance {symbol}: {payload['error']}")
+    data = payload.get("result")
     if not data:
         return pd.DataFrame()
     res = data[0]
@@ -268,18 +307,24 @@ def _pct(a: Optional[float], b: Optional[float]) -> Optional[float]:
 
 
 def _global_snapshot() -> List[Dict[str, Any]]:
-    out = []
-    ts = now_ct().isoformat()
-    for label, sym in GLOBAL_SYMBOLS.items():
+    out=[]
+    ts=now_ct().isoformat()
+    def fetch(label: str, sym: str):
         try:
-            d = _daily(sym, "5d")
-            if len(d) < 2: continue
-            p = float(d["close"].iloc[-1]); pc = float(d["close"].iloc[-2])
-            out.append({"label":label,"symbol":sym,"price":p,"change_pct":_pct(p,pc)})
-        except Exception:
-            continue
+            d=_daily(sym,"5d")
+            if len(d)<2: return None
+            p=float(d["close"].iloc[-1]); pc=float(d["close"].iloc[-2])
+            return {"label":label,"symbol":sym,"price":p,"change_pct":_pct(p,pc)}
+        except Exception as exc:
+            logger.warning("Global reference %s unavailable: %s", sym, exc)
+            return None
+    with ThreadPoolExecutor(max_workers=MAX_FETCH_WORKERS) as pool:
+        futs=[pool.submit(fetch,label,sym) for label,sym in GLOBAL_SYMBOLS.items()]
+        for f in as_completed(futs):
+            val=f.result()
+            if val:out.append(val)
     with _db_lock:
-        c = db_conn()
+        c=db_conn()
         for x in out:
             c.execute("INSERT INTO globals(ts,label,symbol,price,change_pct) VALUES(?,?,?,?,?)", (ts,x["label"],x["symbol"],x["price"],x["change_pct"]))
         c.commit(); c.close()
@@ -295,20 +340,21 @@ def _market_context(globals_: List[Dict[str, Any]]) -> float:
     return max(-10.0,min(10.0, weighted * 5.0))
 
 
-def _ticker_metrics(ticker: str) -> Optional[Dict[str, Any]]:
+def _ticker_metrics(ticker: str, errors: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
     try:
         intr = _yf_chart(ticker, "5d", "5m", True)
         daily = _daily(ticker, "3mo")
         if intr.empty or len(daily) < 20:
-            return None
+            raise RuntimeError("missing intraday or 20-day historical candles")
         local = intr.tz_convert(ET)
         today = now_ct().astimezone(ET).date()
         tdf = local[local.index.date == today]
         if tdf.empty:
-            # before Yahoo has today's bar, use latest available intraday day
-            latest_date = local.index[-1].date(); tdf = local[local.index.date == latest_date]
+            raise RuntimeError("no current-day candles (feed may be delayed or market closed)")
         pm = tdf.between_time("04:00", "09:29")
-        price = float((pm if not pm.empty else tdf)["close"].dropna().iloc[-1])
+        if pm.empty or pm["close"].dropna().empty:
+            raise RuntimeError("no current-day premarket candles")
+        price = float(pm["close"].dropna().iloc[-1])
         prev_close = float(daily["close"].dropna().iloc[-2] if daily.index[-1].date() >= today else daily["close"].dropna().iloc[-1])
         pm_first = float(pm["open"].dropna().iloc[0]) if not pm.empty and not pm["open"].dropna().empty else price
         pm_vol = float(pm["volume"].fillna(0).sum()) if not pm.empty else 0.0
@@ -317,7 +363,10 @@ def _ticker_metrics(ticker: str) -> Optional[Dict[str, Any]]:
         gap = _pct(pm_first, prev_close) or 0.0
         pm_chg = _pct(price, pm_first) or 0.0
         return {"ticker":ticker,"price":price,"prev_close":prev_close,"gap_pct":gap,"pm_change_pct":pm_chg,"pm_volume":pm_vol,"avg_daily_volume":avg_vol,"dollar_volume":adv_dollars}
-    except Exception:
+    except Exception as exc:
+        if errors is not None:
+            errors.append(f"{ticker}: {str(exc)[:150]}")
+        logger.warning("Ticker %s data unavailable: %s", ticker, exc)
         return None
 
 
@@ -343,48 +392,154 @@ def _score_prelim(m: Dict[str, Any], global_bias: float, sector_change: float, c
     return total,bias,pieces
 
 
+def _update_scan_progress(**changes: Any) -> None:
+    with _job_lock:
+        _scan_job.update(changes)
+
+
+def scan_state() -> Dict[str, Any]:
+    with _job_lock:
+        current = dict(_scan_job)
+    with _db_lock:
+        c = db_conn()
+        recent = c.execute("SELECT * FROM scan_runs ORDER BY id DESC LIMIT 1").fetchone()
+        c.close()
+    if recent:
+        recent = dict(recent)
+        recent["errors"] = json.loads(recent.pop("errors_json") or "[]")
+    return {"job": current, "last_run": recent,
+            "storage": "disk path /var/data (verify Render persistent disk is attached)" if str(DB).startswith("/var/data/") else "ephemeral (not durable)",
+            "market_feed": "Yahoo Finance public chart API (unofficial; may rate-limit or block hosted servers)"}
+
+
 def run_overnight_scan() -> Dict[str, Any]:
     init_db()
-    globals_ = _global_snapshot()
-    gbias = _market_context(globals_)
-    # Sector moves from ETFs.
-    sector_moves: Dict[str,float] = {}
-    for sec,sym in SECTOR_ETF.items():
-        try:
-            d = _daily(sym,"5d")
-            sector_moves[sec] = _pct(float(d.close.iloc[-1]), float(d.close.iloc[-2])) or 0.0
-        except Exception:
-            sector_moves[sec] = 0.0
-
-    rows = []
-    for ticker in scan_universe():
-        if ticker in set(SECTOR_ETF.values()) or ticker in {"SPY","QQQ","IWM","DIA"}:
-            continue
-        m = _ticker_metrics(ticker)
-        if not m: continue
-        sec = TICKER_SECTOR.get(ticker, "Unknown")
-        sec_chg = sector_moves.get(sec,0.0)
-        # Fast first pass with price/volume. News is queried only for candidates that already move.
-        provisional,_bias,_ = _score_prelim(m,gbias,sec_chg,0.0)
-        catalyst = 0.0; catalyst_text = "No major headline found"; sec_forms=""
-        if provisional >= 22 or abs(float(m.get("gap_pct") or 0)) >= 1.5:
-            hscore, catalyst_text = _headline_catalyst(ticker)
-            sscore, sec_forms = _sec_recent_forms(ticker)
-            catalyst = min(25.0, hscore + sscore)
-        score,bias,pieces = _score_prelim(m,gbias,sec_chg,catalyst)
-        row = {**m,"sector":sec,"catalyst_score":catalyst,"catalyst_text":catalyst_text,"sec_forms":sec_forms,"global_score":pieces["global"],"sector_score":pieces["sector"],"liquidity_score":pieces["liquidity"],"movement_score":pieces["movement"],"prelim_bias":bias,"prelim_score":round(score,2)}
-        rows.append(row)
-
-    rows.sort(key=lambda x:x["prelim_score"], reverse=True)
-    ts = now_ct().isoformat(); date = now_ct().date().isoformat()
+    started = now_ct().isoformat()
+    universe = [t for t in scan_universe() if t not in set(SECTOR_ETF.values()) | {"SPY", "QQQ", "IWM", "DIA"}]
+    _update_scan_progress(state="running", started_at=started, finished_at=None,
+                          total=len(universe), processed=0, scanned=0, error=None, errors=[])
     with _db_lock:
-        c=db_conn()
-        for r in rows:
-            c.execute("""INSERT OR REPLACE INTO scans(scan_ts,scan_date,ticker,sector,price,prev_close,gap_pct,pm_change_pct,pm_volume,avg_daily_volume,dollar_volume,catalyst_score,catalyst_text,sec_forms,global_score,sector_score,liquidity_score,movement_score,prelim_bias,prelim_score)
-                         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                      (ts,date,r["ticker"],r["sector"],r["price"],r["prev_close"],r["gap_pct"],r["pm_change_pct"],r["pm_volume"],r["avg_daily_volume"],r["dollar_volume"],r["catalyst_score"],r["catalyst_text"],r["sec_forms"],r["global_score"],r["sector_score"],r["liquidity_score"],r["movement_score"],r["prelim_bias"],r["prelim_score"]))
+        c = db_conn()
+        cur = c.execute("INSERT INTO scan_runs(started_at,status,universe_count) VALUES(?,?,?)",
+                        (started, "running", len(universe)))
+        run_id = cur.lastrowid
         c.commit(); c.close()
-    return {"scan_ts":ts,"market_bias_score":round(gbias,2),"globals":globals_,"candidates":rows[:15],"universe_count":len(scan_universe()),"scanned":len(rows)}
+    errors: List[str] = []
+    scanned = 0
+    processed = 0
+    try:
+        # Independent quote requests are bounded; the HTTP API stays responsive.
+        globals_ = _global_snapshot()
+        gbias = _market_context(globals_)
+        sector_moves: Dict[str, float] = {}
+        with ThreadPoolExecutor(max_workers=MAX_FETCH_WORKERS) as pool:
+            work = {pool.submit(_daily, sym, "5d"): sec for sec, sym in SECTOR_ETF.items()}
+            for future in as_completed(work):
+                sec = work[future]
+                try:
+                    d = future.result()
+                    sector_moves[sec] = (_pct(float(d.close.iloc[-1]), float(d.close.iloc[-2])) or 0.0) if len(d) >= 2 else 0.0
+                except Exception as exc:
+                    sector_moves[sec] = 0.0
+                    if len(errors) < 20: errors.append(f"Sector {sec}: {str(exc)[:120]}")
+
+        # This is still an unofficial upstream; avoid firing every request at once.
+        # Collect the errors rather than returning an apparently successful empty list.
+        results: List[Dict[str, Any]] = []
+        def fetch_one(ticker: str):
+            problems = []
+            m = _ticker_metrics(ticker, problems)
+            return ticker, m, problems
+        with ThreadPoolExecutor(max_workers=MAX_FETCH_WORKERS) as pool:
+            work = {pool.submit(fetch_one, ticker): ticker for ticker in universe}
+            for future in as_completed(work):
+                processed += 1
+                try:
+                    ticker, m, problems = future.result()
+                    if problems and len(errors) < 20: errors.extend(problems[:max(0,20-len(errors))])
+                    if m:
+                        results.append(m)
+                        scanned += 1
+                except Exception as exc:
+                    if len(errors) < 20: errors.append(f"{work[future]}: {str(exc)[:150]}")
+                _update_scan_progress(processed=processed, scanned=scanned, errors=errors[-10:])
+
+        if not results:
+            msg = ("No current-day premarket quotes returned. The Yahoo feed may be blocked, "
+                   "rate-limited, delayed, or the market may be closed. "
+                   "Check scan details and Render logs; do not treat this as a no-trade signal.")
+            raise RuntimeError(msg)
+
+        rows = []
+        for m in results:
+            ticker = m["ticker"]
+            sec = TICKER_SECTOR.get(ticker, "Unknown")
+            sector_change = sector_moves.get(sec, 0.0)
+            score, bias, pieces = _score_prelim(m, gbias, sector_change, 0.0)
+            rows.append({**m,"sector":sec,"catalyst_score":0.0,
+                         "catalyst_text":"No headline checked", "sec_forms":"",
+                         "global_score":pieces["global"],"sector_score":pieces["sector"],
+                         "liquidity_score":pieces["liquidity"],"movement_score":pieces["movement"],
+                         "prelim_bias":bias,"prelim_score":round(score,2)})
+        rows.sort(key=lambda x: x["prelim_score"],reverse=True)
+        # Enrich only the most active names. The old version fetched SEC metadata
+        # individually for dozens of tickers, making a single scan run for minutes.
+        for r in rows[:min(10, len(rows))]:
+            ticker = r["ticker"]
+            hscore, headline = _headline_catalyst(ticker)
+            # Only query SEC when a real contact user-agent has been configured.
+            sec_score, forms = _sec_recent_forms(ticker) if "contact@example.com" not in SEC_USER_AGENT else (0.0, "")
+            combined = min(25.0, hscore + sec_score)
+            score, bias, pieces = _score_prelim(r, gbias, sector_moves.get(r["sector"],0.0), combined)
+            r.update(catalyst_score=combined,catalyst_text=headline,sec_forms=forms,
+                     prelim_score=round(score,2),prelim_bias=bias)
+        rows.sort(key=lambda x: x["prelim_score"],reverse=True)
+        ts = now_ct().isoformat()
+        date = now_ct().date().isoformat()
+        with _db_lock:
+            c = db_conn()
+            for r in rows:
+                c.execute("""INSERT OR REPLACE INTO scans(scan_ts,scan_date,ticker,sector,price,prev_close,gap_pct,pm_change_pct,pm_volume,avg_daily_volume,dollar_volume,catalyst_score,catalyst_text,sec_forms,global_score,sector_score,liquidity_score,movement_score,prelim_bias,prelim_score)
+                             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                          (ts,date,r["ticker"],r["sector"],r["price"],r["prev_close"],r["gap_pct"],r["pm_change_pct"],r["pm_volume"],r["avg_daily_volume"],r["dollar_volume"],r["catalyst_score"],r["catalyst_text"],r["sec_forms"],r["global_score"],r["sector_score"],r["liquidity_score"],r["movement_score"],r["prelim_bias"],r["prelim_score"]))
+            c.commit(); c.close()
+        _update_scan_progress(state="completed", finished_at=now_ct().isoformat(),
+                              scanned=len(rows), processed=processed, errors=errors[-10:])
+        result = {"scan_ts":ts,"market_bias_score":round(gbias,2),"globals":globals_,
+                  "candidates":rows[:15],"universe_count":len(universe),"scanned":len(rows),
+                  "diagnostic_errors":errors[-10:]}
+        with _db_lock:
+            c=db_conn()
+            c.execute("UPDATE scan_runs SET finished_at=?, status='completed', processed=?, scanned=?, errors_json=? WHERE id=?",
+                      (now_ct().isoformat(), processed, len(rows),json.dumps(errors[-20:]),run_id))
+            c.commit();c.close()
+        logger.info("Morning Edge scan completed: %s/%s tickers; %s sample errors",len(rows),len(universe),len(errors))
+        return result
+    except Exception as exc:
+        logger.exception("Morning Edge scan failed")
+        _update_scan_progress(state="failed", finished_at=now_ct().isoformat(),
+                              error=str(exc),processed=processed,scanned=scanned,errors=errors[-10:])
+        with _db_lock:
+            c=db_conn()
+            c.execute("UPDATE scan_runs SET finished_at=?, status='failed', error=?, processed=?, scanned=?, errors_json=? WHERE id=?",
+                      (now_ct().isoformat(),str(exc),processed,scanned,json.dumps(errors[-20:]),run_id))
+            c.commit(); c.close()
+        raise
+
+
+def launch_scan(source: str = "manual") -> Dict[str,Any]:
+    with _job_lock:
+        if _scan_job["state"] == "running":
+            return {"accepted":False,"message":"A scan is already running","job":dict(_scan_job)}
+        _scan_job.update(state="running",started_at=now_ct().isoformat(),finished_at=None,
+                         processed=0,scanned=0,error=None,errors=[])
+    def work():
+        try:
+            run_overnight_scan()
+        except Exception:
+            logger.exception("%s scan ended with an error",source)
+    threading.Thread(target=work,daemon=True,name=f"morning-edge-scan-{source}").start()
+    return {"accepted":True,"message":"Scan started in background"}
 
 
 def _vwap(df: pd.DataFrame) -> float:
@@ -448,7 +603,8 @@ def _confirm_ticker(scanrow: sqlite3.Row) -> Dict[str, Any]:
     if td.empty:
         raise RuntimeError("No current-day data")
     pm=td.between_time("04:00","09:29")
-    opening=td.between_time("09:30","09:45")
+    # The 09:45 ET candle is not complete at 08:45 CT. Avoid look-ahead.
+    opening=td.between_time("09:30","09:44")
     if len(opening)<3:
         raise RuntimeError("Opening 15-minute data incomplete")
     entry=float(opening.close.iloc[-1]); vw=_vwap(opening); orh=float(opening.high.max()); orl=float(opening.low.min())
@@ -456,9 +612,9 @@ def _confirm_ticker(scanrow: sqlite3.Row) -> Dict[str, Any]:
     # Baseline: average volume during first 15 minutes of prior available days.
     prior=[]
     for d in sorted(set(intr.index.date))[-6:-1]:
-        w=intr[intr.index.date==d].between_time("09:30","09:45")
+        w=intr[intr.index.date==d].between_time("09:30","09:44")
         if not w.empty: prior.append(float(w.volume.fillna(0).sum()))
-    base=np.mean(prior) if prior else max(1.0,first15vol)
+    base=sum(prior)/len(prior) if prior else max(1.0,first15vol)
     rel=float(first15vol/max(1.0,base))
     pos=(entry-orl)/max(1e-9,orh-orl)
     above=entry>vw
@@ -497,15 +653,16 @@ def _confirm_ticker(scanrow: sqlite3.Row) -> Dict[str, Any]:
 
 
 def confirm_opening_range() -> Dict[str, Any]:
-    init_db(); d=now_ct().date().isoformat()
+    n = now_ct()
+    if n.hour * 60 + n.minute < CONFIRM_HOUR_CT * 60 + CONFIRM_MINUTE_CT:
+        raise RuntimeError("8:45 CT confirmation is not available before 8:45 AM Central")
+    init_db(); d=n.date().isoformat()
     with _db_lock:
         c=db_conn()
         # latest scan row per ticker today
         scans=c.execute("""SELECT s.* FROM scans s JOIN (SELECT ticker,MAX(scan_ts) mx FROM scans WHERE scan_date=? GROUP BY ticker) x ON s.ticker=x.ticker AND s.scan_ts=x.mx WHERE s.scan_date=? ORDER BY s.prelim_score DESC LIMIT 20""",(d,d)).fetchall(); c.close()
     if not scans:
-        scan=run_overnight_scan()
-        with _db_lock:
-            c=db_conn(); scans=c.execute("""SELECT s.* FROM scans s JOIN (SELECT ticker,MAX(scan_ts) mx FROM scans WHERE scan_date=? GROUP BY ticker) x ON s.ticker=x.ticker AND s.scan_ts=x.mx WHERE s.scan_date=? ORDER BY s.prelim_score DESC LIMIT 20""",(d,d)).fetchall(); c.close()
+        raise RuntimeError("No overnight watchlist for today. Complete a successful overnight scan before confirmation.")
     results=[]
     for sr in scans:
         try: results.append((_confirm_ticker(sr),sr))
@@ -571,24 +728,33 @@ def latest_candidates() -> Dict[str,Any]:
 
 
 def _worker() -> None:
-    global _worker_started
+    global _last_auto_bucket
     while True:
         try:
-            n=now_ct(); weekday=n.weekday()<5
-            if weekday:
+            n=now_ct()
+            if n.weekday()<5:
                 mins=n.hour*60+n.minute
-                # overnight/premarket refresh 04:00-08:25 CT every interval
-                if 4*60 <= mins <= 8*60+25 and n.minute % max(1,SCAN_INTERVAL_MIN) == 0:
-                    run_overnight_scan()
-                # opening confirmation at / after 8:45 if none exists
-                if mins>=CONFIRM_HOUR_CT*60+CONFIRM_MINUTE_CT and mins<=9*60+5:
+                if 4*60 <= mins <= 8*60+25:
+                    bucket=(n.date().isoformat(), mins // max(1,SCAN_INTERVAL_MIN))
+                    if bucket != _last_auto_bucket:
+                        with _job_lock:
+                            running = _scan_job["state"] == "running"
+                        if not running:
+                            _last_auto_bucket = bucket
+                            launch_scan("automatic")
+                if CONFIRM_HOUR_CT*60+CONFIRM_MINUTE_CT <= mins <= 9*60+5:
                     with _db_lock:
-                        c=db_conn(); cnt=c.execute("SELECT COUNT(*) n FROM confirmations WHERE trade_date=?",(n.date().isoformat(),)).fetchone()[0]; c.close()
-                    if cnt==0: confirm_opening_range()
+                        c=db_conn()
+                        cnt=c.execute("SELECT COUNT(*) FROM confirmations WHERE trade_date=?",(n.date().isoformat(),)).fetchone()[0]
+                        latest=c.execute("SELECT COUNT(*) FROM scans WHERE scan_date=?",(n.date().isoformat(),)).fetchone()[0]
+                        c.close()
+                    if cnt==0 and latest:
+                        try:confirm_opening_range()
+                        except Exception:logger.exception("Automatic confirmation failed")
                 if 8*60+46 <= mins <= 15*60+10:
                     settle_paper_trades()
         except Exception:
-            pass
+            logger.exception("Morning Edge scheduler failure")
         time.sleep(60)
 
 
@@ -600,11 +766,15 @@ def start_worker() -> None:
 
 
 app=FastAPI(title=APP_NAME)
-app.mount("/assets",StaticFiles(directory=str(ROOT)),name="assets")
 
 @app.on_event("startup")
 def startup():
-    init_db(); start_worker()
+    init_db()
+    with _db_lock:
+        c=db_conn()
+        c.execute("UPDATE scan_runs SET status='interrupted',finished_at=?,error='Server restarted before scan completed' WHERE status='running'", (now_ct().isoformat(),))
+        c.commit();c.close()
+    start_worker()
 
 @app.get("/")
 def home(): return FileResponse(ROOT/"index.html")
@@ -612,12 +782,15 @@ def home(): return FileResponse(ROOT/"index.html")
 @app.get("/api/status")
 def status():
     data=latest_candidates(); n=now_ct()
-    return {"ok":True,"app":APP_NAME,"now_ct":n.isoformat(),"paper_dollars":PAPER_DOLLARS,"min_rr":MIN_RR,"max_setups":MAX_SETUPS,"universe":len(scan_universe()),"news_enabled":bool(FINNHUB_API_KEY),"latest":data}
+    return {"ok":True,"app":APP_NAME,"now_ct":n.isoformat(),"paper_dollars":PAPER_DOLLARS,"min_rr":MIN_RR,"max_setups":MAX_SETUPS,"universe":len(scan_universe()),"news_enabled":bool(FINNHUB_API_KEY),"latest":data,"scanner":scan_state()}
 
-@app.post("/api/run-scan")
+@app.post("/api/run-scan", status_code=202)
 def api_scan():
-    try:return run_overnight_scan()
-    except Exception as e: raise HTTPException(500,str(e))
+    return launch_scan("manual")
+
+@app.get("/api/health")
+def health():
+    return {"ok":True,"app":APP_NAME,"scanner":scan_state()}
 
 @app.post("/api/confirm")
 def api_confirm():
