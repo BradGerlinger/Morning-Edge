@@ -1,4 +1,4 @@
-MORNING EDGE V1.1 - REPAIR PACKAGE
+MORNING EDGE V1.2 - CRASH ISOLATION REPAIR PACKAGE
 
 WHAT CHANGED
 - Dashboard displays live scanner status, partial progress, sample quote errors, and last attempt.
@@ -43,3 +43,14 @@ IMPORTANT LIMITATIONS
   your existing GitHub repository; remove it only after preserving needed data.
 - Live data access and Render runtime availability could not be tested from this
   offline environment. Automated tests use controlled sample responses.
+
+V1.2 DETAILS:
+- After deployment, confirm the header says V1.2. If it still says V1,
+  cached HTML or the old commit is being served.
+- Wait for the service to finish deploying before tapping the scan button.
+- On scan failure, the status now tells you whether Yahoo is blocked,
+  the scanner process died, or the market has no current-day premarket bars.
+- Do not upgrade Render memory yet. If a new 502 occurs without an active
+  scan, screenshot the instance termination message and Python crash logs.
+- If 0 quotes due to Yahoo 429/403, the stock-data provider needs replacement;
+  rebuilding the same scanner won't unlock that data feed.

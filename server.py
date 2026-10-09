@@ -9,6 +9,9 @@ import json
 import math
 import os
 import sqlite3
+import subprocess
+import sys
+import faulthandler
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -31,6 +34,7 @@ DB = Path(os.getenv("MORNING_EDGE_DB", DEFAULT_DB))
 DB.parent.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("morning-edge")
+faulthandler.enable()
 
 PAPER_DOLLARS = float(os.getenv("PAPER_DOLLARS", "100"))
 MIN_RR = float(os.getenv("MIN_RR", "1.5"))
@@ -407,6 +411,12 @@ def scan_state() -> Dict[str, Any]:
     if recent:
         recent = dict(recent)
         recent["errors"] = json.loads(recent.pop("errors_json") or "[]")
+        # A scan runs in a separate process so native-library faults do not kill the API.
+        # DB-backed progress is authoritative across processes (and survives an API refresh).
+        if recent["status"] == "running":
+            current.update(state="running", started_at=recent["started_at"],
+                           total=recent["universe_count"], processed=recent["processed"],
+                           scanned=recent["scanned"], errors=recent["errors"][-10:])
     return {"job": current, "last_run": recent,
             "storage": "disk path /var/data (verify Render persistent disk is attached)" if str(DB).startswith("/var/data/") else "ephemeral (not durable)",
             "market_feed": "Yahoo Finance public chart API (unofficial; may rate-limit or block hosted servers)"}
@@ -420,28 +430,25 @@ def run_overnight_scan() -> Dict[str, Any]:
                           total=len(universe), processed=0, scanned=0, error=None, errors=[])
     with _db_lock:
         c = db_conn()
-        cur = c.execute("INSERT INTO scan_runs(started_at,status,universe_count) VALUES(?,?,?)",
-                        (started, "running", len(universe)))
-        run_id = cur.lastrowid
+        inherited_run_id = os.getenv("MORNING_EDGE_SCAN_RUN_ID", "").strip()
+        if inherited_run_id:
+            run_id = int(inherited_run_id)
+            c.execute("UPDATE scan_runs SET universe_count=?, status='running' WHERE id=?", (len(universe), run_id))
+        else:
+            cur = c.execute("INSERT INTO scan_runs(started_at,status,universe_count) VALUES(?,?,?)",
+                            (started, "running", len(universe)))
+            run_id = cur.lastrowid
         c.commit(); c.close()
     errors: List[str] = []
     scanned = 0
     processed = 0
     try:
         # Independent quote requests are bounded; the HTTP API stays responsive.
-        globals_ = _global_snapshot()
-        gbias = _market_context(globals_)
-        sector_moves: Dict[str, float] = {}
-        with ThreadPoolExecutor(max_workers=MAX_FETCH_WORKERS) as pool:
-            work = {pool.submit(_daily, sym, "5d"): sec for sec, sym in SECTOR_ETF.items()}
-            for future in as_completed(work):
-                sec = work[future]
-                try:
-                    d = future.result()
-                    sector_moves[sec] = (_pct(float(d.close.iloc[-1]), float(d.close.iloc[-2])) or 0.0) if len(d) >= 2 else 0.0
-                except Exception as exc:
-                    sector_moves[sec] = 0.0
-                    if len(errors) < 20: errors.append(f"Sector {sec}: {str(exc)[:120]}")
+        # If the entire provider is blocked, fail quickly rather than hammering 74 tickers.
+        try:
+            _yf_chart("AAPL", "5d", "5m", True)
+        except Exception as exc:
+            raise RuntimeError(f"Premarket feed preflight failed: {exc}") from exc
 
         # This is still an unofficial upstream; avoid firing every request at once.
         # Collect the errors rather than returning an apparently successful empty list.
@@ -463,12 +470,33 @@ def run_overnight_scan() -> Dict[str, Any]:
                 except Exception as exc:
                     if len(errors) < 20: errors.append(f"{work[future]}: {str(exc)[:150]}")
                 _update_scan_progress(processed=processed, scanned=scanned, errors=errors[-10:])
+                if processed % 5 == 0 or processed == len(universe):
+                    with _db_lock:
+                        c = db_conn()
+                        c.execute("UPDATE scan_runs SET processed=?, scanned=?, errors_json=? WHERE id=?",
+                                  (processed, scanned, json.dumps(errors[-20:]), run_id))
+                        c.commit(); c.close()
 
         if not results:
             msg = ("No current-day premarket quotes returned. The Yahoo feed may be blocked, "
                    "rate-limited, delayed, or the market may be closed. "
                    "Check scan details and Render logs; do not treat this as a no-trade signal.")
             raise RuntimeError(msg)
+
+        # Reference symbols are optional context; do them AFTER collecting stock quotes.
+        globals_ = _global_snapshot()
+        gbias = _market_context(globals_)
+        sector_moves: Dict[str, float] = {}
+        with ThreadPoolExecutor(max_workers=MAX_FETCH_WORKERS) as pool:
+            work = {pool.submit(_daily, sym, "5d"): sec for sec, sym in SECTOR_ETF.items()}
+            for future in as_completed(work):
+                sec = work[future]
+                try:
+                    d = future.result()
+                    sector_moves[sec] = (_pct(float(d.close.iloc[-1]), float(d.close.iloc[-2])) or 0.0) if len(d) >= 2 else 0.0
+                except Exception as exc:
+                    sector_moves[sec] = 0.0
+                    if len(errors) < 20: errors.append(f"Sector {sec}: {str(exc)[:120]}")
 
         rows = []
         for m in results:
@@ -528,18 +556,69 @@ def run_overnight_scan() -> Dict[str, Any]:
 
 
 def launch_scan(source: str = "manual") -> Dict[str,Any]:
+    """Run the scanner in a separate Python process.
+
+    A numpy/pandas extension crashing with SIGSEGV then kills the scanner only,
+    not the FastAPI server. A parent monitor records its exit reason in SQLite.
+    """
     with _job_lock:
         if _scan_job["state"] == "running":
             return {"accepted":False,"message":"A scan is already running","job":dict(_scan_job)}
-        _scan_job.update(state="running",started_at=now_ct().isoformat(),finished_at=None,
-                         processed=0,scanned=0,error=None,errors=[])
-    def work():
+        with _db_lock:
+            c = db_conn()
+            busy = c.execute("SELECT id FROM scan_runs WHERE status='running' ORDER BY id DESC LIMIT 1").fetchone()
+            if busy:
+                c.close()
+                return {"accepted":False,"message":"An earlier scan is still running","run_id":busy["id"]}
+            started = now_ct().isoformat()
+            universe_count = len([t for t in scan_universe() if t not in set(SECTOR_ETF.values()) | {"SPY", "QQQ", "IWM", "DIA"}])
+            cur = c.execute("INSERT INTO scan_runs(started_at,status,universe_count) VALUES(?,?,?)",
+                            (started, "running", universe_count))
+            run_id = cur.lastrowid
+            c.commit(); c.close()
+        _scan_job.update(state="running",started_at=started,finished_at=None,
+                         total=universe_count,processed=0,scanned=0,error=None,errors=[])
+        env = os.environ.copy()
+        env["MORNING_EDGE_SCAN_RUN_ID"] = str(run_id)
+        env["PYTHONFAULTHANDLER"] = "1"
         try:
-            run_overnight_scan()
-        except Exception:
-            logger.exception("%s scan ended with an error",source)
-    threading.Thread(target=work,daemon=True,name=f"morning-edge-scan-{source}").start()
-    return {"accepted":True,"message":"Scan started in background"}
+            proc = subprocess.Popen([sys.executable,"-u","-X","faulthandler",str(ROOT / "server.py"),"scan"],
+                                    cwd=str(ROOT), env=env, stdin=subprocess.DEVNULL)
+        except Exception as exc:
+            with _db_lock:
+                c=db_conn()
+                c.execute("UPDATE scan_runs SET status='failed',finished_at=?,error=? WHERE id=?",
+                          (now_ct().isoformat(),f"Could not start scanner process: {exc}",run_id))
+                c.commit();c.close()
+            _scan_job.update(state="failed",finished_at=now_ct().isoformat(),error=str(exc))
+            logger.exception("Unable to launch isolated market scanner")
+            raise HTTPException(503, f"Unable to launch scanner: {exc}") from exc
+    logger.info("Launched isolated %s scan, PID=%s, run_id=%s",source,proc.pid,run_id)
+
+    def monitor():
+        code = proc.wait()
+        with _db_lock:
+            c=db_conn()
+            latest=c.execute("SELECT status,error FROM scan_runs WHERE id=?",(run_id,)).fetchone()
+            status=latest["status"] if latest else None
+            if status == "running":
+                message=(f"Scanner subprocess exited with code {code} before finishing. "
+                         + ("Signal 11 / segmentation fault suspected. " if code in (-11,139) else "")
+                         + "Check Render logs for the Python faulthandler traceback.")
+                c.execute("UPDATE scan_runs SET status='failed',finished_at=?,error=? WHERE id=?",
+                          (now_ct().isoformat(),message,run_id))
+                c.commit()
+                status="failed"
+                logger.error(message)
+            elif code != 0:
+                logger.error("Scanner subprocess exited code %s, DB status=%s",code,status)
+            c.close()
+        with _job_lock:
+            _scan_job.update(state=status or "failed",finished_at=now_ct().isoformat(),
+                             error=(None if code==0 else f"Scanner subprocess exited code {code}"))
+
+    threading.Thread(target=monitor,daemon=True,name="morning-edge-scan-monitor").start()
+    return {"accepted":True,"message":"Isolated scanner started","run_id":run_id}
 
 
 def _vwap(df: pd.DataFrame) -> float:
@@ -809,3 +888,14 @@ def export_csv():
         c=db_conn(); cur=c.execute("SELECT * FROM confirmations ORDER BY trade_date DESC,score DESC"); names=[d[0] for d in cur.description]; rows=cur.fetchall(); c.close()
     out=io.StringIO(); w=csv.writer(out); w.writerow(names); w.writerows(rows)
     return StreamingResponse(iter([out.getvalue()]),media_type="text/csv",headers={"Content-Disposition":"attachment; filename=morning-edge-paper-trades.csv"})
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["scan"]:
+        try:
+            run_overnight_scan()
+        except Exception:
+            logger.exception("Isolated scanner failed")
+            sys.exit(1)
+    else:
+        print("Run with: uvicorn server:app --host 0.0.0.0 --port $PORT --loop asyncio --http h11")

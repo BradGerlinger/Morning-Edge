@@ -29,6 +29,7 @@ def test_scan_failure_persisted_and_exposed(tmp_path,monkeypatch):
     monkeypatch.setattr(server, "_global_snapshot",lambda: [])
     monkeypatch.setattr(server, "_daily",lambda *args,**kwargs: pd.DataFrame())
     monkeypatch.setattr(server, "_ticker_metrics",lambda t,errors=None: None)
+    monkeypatch.setattr(server, "_yf_chart",lambda *args,**kwargs: pd.DataFrame())
     with pytest.raises(RuntimeError,match="No current-day premarket quotes"):
         server.run_overnight_scan()
     state=server.scan_state()
@@ -43,6 +44,7 @@ def test_scan_success_populates_api(tmp_path, monkeypatch):
     monkeypatch.setattr(server,"scan_universe",lambda: ["AAPL"])
     monkeypatch.setattr(server,"_global_snapshot",lambda: [])
     monkeypatch.setattr(server,"_daily",lambda *args,**kwargs: pd.DataFrame())
+    monkeypatch.setattr(server,"_yf_chart",lambda *args,**kwargs: pd.DataFrame())
     monkeypatch.setattr(server,"_ticker_metrics",lambda t,errors=None: {
         "ticker":t,"price":108.,"prev_close":100.,"gap_pct":6.,"pm_change_pct":2.,
         "pm_volume":1000000.,"avg_daily_volume":5000000.,"dollar_volume":1e9})
@@ -59,24 +61,52 @@ def test_scan_success_populates_api(tmp_path, monkeypatch):
 
 
 def test_manual_scan_nonblocking(tmp_path,monkeypatch):
-    monkeypatch.setattr(server,"DB",tmp_path/'async.db')
+    monkeypatch.setattr(server, "DB", tmp_path/'async.db')
     server.init_db()
-    started=threading.Event()
-    release=threading.Event()
-    def slow_scan():
-        started.set()
-        assert release.wait(2)
-        server._update_scan_progress(state='completed')
-    monkeypatch.setattr(server,"run_overnight_scan",slow_scan)
-    monkeypatch.setattr(server,"start_worker",lambda:None)
+    start = threading.Event()
+    finish = threading.Event()
+    class FakeChild:
+        pid = 1234
+        def __init__(self, *args, **kwargs):
+            start.set()
+        def wait(self):
+            assert finish.wait(3)
+            return 0
+    monkeypatch.setattr(server.subprocess, "Popen", FakeChild)
+    monkeypatch.setattr(server, "start_worker", lambda: None)
+    server._update_scan_progress(state='idle')
     with TestClient(server.app) as client:
-        a=client.post('/api/run-scan')
-        assert a.status_code==202 and a.json()['accepted']
-        assert started.wait(1)
-        b=client.post('/api/run-scan')
+        a = client.post('/api/run-scan')
+        assert a.status_code == 202 and a.json()['accepted']
+        assert start.wait(1)
+        b = client.post('/api/run-scan')
         assert b.json()['accepted'] is False
-        release.set()
+        with server._db_lock:
+            c=server.db_conn()
+            c.execute("UPDATE scan_runs SET status='completed' WHERE id=?",(a.json()['run_id'],))
+            c.commit();c.close()
+        finish.set()
         for _ in range(100):
-            if server.scan_state()['job']['state']=='completed':break
+            if server._scan_job['state']=='completed':break
             time.sleep(.01)
-        assert server.scan_state()['job']['state']=='completed'
+        assert server.scan_state()['last_run']['status']=='completed'
+
+
+def test_native_worker_crash_does_not_stop_api(tmp_path,monkeypatch):
+    monkeypatch.setattr(server, 'DB', tmp_path/'crash.db')
+    server.init_db()
+    class FailingChild:
+        pid=2222
+        def __init__(self,*args,**kwargs): pass
+        def wait(self): return -11
+    monkeypatch.setattr(server.subprocess, 'Popen', FailingChild)
+    monkeypatch.setattr(server,'start_worker',lambda:None)
+    server._update_scan_progress(state='idle')
+    with TestClient(server.app) as client:
+        resp=client.post('/api/run-scan')
+        assert resp.status_code==202
+        for _ in range(150):
+            if server.scan_state()['last_run']['status']=='failed':break
+            time.sleep(.01)
+        assert 'Signal 11' in server.scan_state()['last_run']['error']
+        assert client.get('/api/status').status_code==200

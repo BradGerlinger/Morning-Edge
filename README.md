@@ -1,4 +1,4 @@
-# Morning Edge V1.1 (Repair)
+# Morning Edge V1.2 (Repair)
 
 A phone-friendly, paper-only U.S. stock movement scanner.
 
@@ -68,3 +68,24 @@ provider may be necessary. Scans are research/paper-only.
 ## Important design choice
 
 The app intentionally does **not** promise to scan literally every U.S. ticker with a free feed. That would add thousands of illiquid/microcap names and rate-limit the data source. V1 starts with a liquid universe because the goal is tradable movement and clean paper-test results. You can override the list with `SCAN_TICKERS`.
+
+
+V1.2 - SERVER CRASH ISOLATION (OCT 9, 2026)
+- Runs quote scanning in a separate subprocess. If scanner hits a native-library
+  segmentation fault, it should no longer terminate the web server process.
+- Writes scan progress to SQLite regularly and reports isolated scanner exit codes.
+- Scans STOCK TICKERS FIRST so the 0/74 indicator means the app really has attempted
+  quote requests; global and sector references no longer block ticker scanning.
+- Performs a one-symbol Yahoo access test before launching 74 per-symbol fetches;
+  if Yahoo is blocked (403/429/DNS), displays that failure instead of hanging.
+- Dashboard no longer prints Render's huge HTML 502 response as raw text;
+  it displays a concise HTTP status message.
+- Enables Python faulthandler tracebacks for lower-level Python/native crashes.
+- Does not solve vendor feed restrictions, nor ensure strategy profitability.
+- Still uses temporary disk by default; configure a Render persistent disk
+  after stabilizing, or historical trade data may vanish on a deploy/restart.
+
+VALIDATION: Eight offline unit tests passed. A local server integration check
+confirmed that the dashboard API remained healthy after the scan worker failed
+on an intentionally inaccessible upstream. Yahoo live data was NOT validated
+in Render; the feed may require replacement with a licensed API.

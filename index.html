@@ -10,7 +10,7 @@
 </style>
 </head>
 <body><div class="wrap">
-<div class="top"><div><div class="title">MORNING EDGE <span style="color:var(--gold)">V1</span></div><div class="sub">Overnight movement scanner • 15-minute confirmation • $100 paper trades</div></div><div class="pill" id="live">● READY</div></div>
+<div class="top"><div><div class="title">MORNING EDGE <span style="color:var(--gold)">V1.2</span></div><div class="sub">Overnight movement scanner • 15-minute confirmation • $100 paper trades</div></div><div class="pill" id="live">● READY</div></div>
 <div class="grid"><div class="metric"><span class="small">UNIVERSE</span><b id="universe">—</b></div><div class="metric"><span class="small">PAPER SIZE</span><b>$100</b></div><div class="metric"><span class="small">MIN R:R</span><b id="rr">1.5R</b></div><div class="metric"><span class="small">CONFIRMED</span><b id="confirmed">0</b></div></div>
 <div class="buttons"><button class="btn primary" onclick="runScan()">RUN OVERNIGHT SCAN</button><button class="btn" onclick="confirmNow()">RUN 8:45 CONFIRMATION</button><button class="btn" onclick="settleNow()">UPDATE PAPER P/L</button><a class="btn" href="/api/export.csv">EXPORT CSV</a></div>
 <div class="section"><h2>SCANNER STATUS <span class="small">Live diagnostic • errors shown here</span></h2><div class="diagnostics" id="scanStatus" aria-live="polite">Checking server and market data…</div></div>
@@ -21,7 +21,19 @@
 <script>
 const $=id=>document.getElementById(id); const money=x=>x==null?'—':'$'+Number(x).toFixed(2); const pct=x=>x==null?'—':(Number(x)>=0?'+':'')+Number(x).toFixed(2)+'%';
 function cls(x){return Number(x)>=0?'pos':'neg'}
-async function api(url,opt){const r=await fetch(url,opt);if(!r.ok)throw new Error(await r.text());return r.json()}
+async function api(url,opt){
+  let r;
+  try{r=await fetch(url,opt)}catch(e){throw new Error('Server connection failed. Check Render service status and logs.')}
+  if(!r.ok){
+    const type=r.headers.get('content-type')||'';
+    let detail='';
+    if(type.includes('application/json')){
+      try{const data=await r.json();detail=String(data.detail||data.error||'').slice(0,260)}catch(e){}
+    }
+    throw new Error(`Server HTTP ${r.status}${detail?': '+detail:''}. ${r.status===502||r.status===503?'Render server unavailable; check Render Logs.':''}`)
+  }
+  return r.json();
+}
 function busy(on){document.body.classList.toggle('loading',on);if(on)$('live').textContent='● REQUESTING'}
 function showScanner(s, nowCT){
  const job=s?.job||{}, last=s?.last_run||{};
@@ -35,14 +47,14 @@ function showScanner(s, nowCT){
    (last.started_at?` • ${last.scanned||0}/${last.universe_count||0} quotes received`:'');
  const time=last.finished_at||last.started_at||'not yet';
  $('scanStatus').replaceChildren();
- const line=document.createElement('div');line.className=ok?'ok':state==='failed'?'error':'muted';
+ const line=document.createElement('div');line.className=ok?'ok':['failed','interrupted'].includes(state)?'error':'muted';
  const hdr=document.createElement('strong');hdr.textContent=`${stale?'STALE (previous day)':state}${prog}`;line.appendChild(hdr);
  $('scanStatus').appendChild(line);
  const more=document.createElement('div');more.className='muted';more.textContent=`Last run: ${time} • Data storage: ${s?.storage||'unknown'}`;$('scanStatus').appendChild(more);
  if(err){const d=document.createElement('div');d.className='error';d.textContent=err;$('scanStatus').appendChild(d);}
  if(errors.length){const d=document.createElement('div');d.className='muted';d.textContent='Sample feed errors: '+errors.join(' | ');$('scanStatus').appendChild(d);}
  if(!last.started_at && !running){const d=document.createElement('div');d.className='muted';d.textContent='No scan has run. Tap RUN OVERNIGHT SCAN or wait for the scheduled morning scan.';$('scanStatus').appendChild(d);}
- $('live').textContent=running?'● SCANNING':ok?'● DATA OK':stale?'● STALE':state==='failed'?'● FEED ERROR':'● NO SCAN';
+ $('live').textContent=running?'● SCANNING':ok?'● DATA OK':stale?'● STALE':['failed','interrupted'].includes(state)?'● SCAN ERROR':'● NO SCAN';
 }
 function render(d,status){
  showScanner(status?.scanner,status?.now_ct);
