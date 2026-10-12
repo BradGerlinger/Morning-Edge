@@ -6,13 +6,15 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT --loop asyncio --http h11
     envVars:
-      - key: PAPER_DOLLARS
+      - key: ALPACA_DATA_FEED
+        value: iex
+      - key: EDGE_PAPER_NOTIONAL
         value: "100"
-      - key: MIN_RR
-        value: "1.5"
-      - key: MAX_SETUPS
+      - key: EDGE_MAX_TRADES_DAY
         value: "5"
-      - key: SCAN_INTERVAL_MIN
-        value: "15"
-      - key: FETCH_WORKERS
+      - key: EDGE_MAX_OPEN
         value: "3"
+      - key: EDGE_DAILY_LOSS_CUTOFF
+        value: "10"
+      - key: EDGE_LEGACY_SCANNER_ENABLED
+        value: "0"

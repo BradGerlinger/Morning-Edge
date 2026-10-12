@@ -1,74 +1,47 @@
 <!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Morning Edge V1</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="theme-color" content="#12171c"><title>Morning Edge V1.3 — Paper</title>
 <style>
-:root{--bg:#111417;--panel:#1a1f24;--panel2:#20262c;--line:#303840;--text:#eef2f5;--muted:#9da9b4;--green:#4de18f;--red:#ff6b76;--gold:#e0b85b;--blue:#6cb7ff}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}.wrap{max-width:1000px;margin:auto;padding:16px 14px 80px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px}.title{font-size:22px;font-weight:800;letter-spacing:.02em}.sub{color:var(--muted);font-size:12px;margin-top:3px}.pill{padding:7px 10px;border:1px solid var(--line);border-radius:999px;background:var(--panel);font-size:12px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0}.metric{background:var(--panel);border:1px solid var(--line);padding:12px;border-radius:12px}.metric b{display:block;font-size:18px;margin-top:4px}.small{font-size:11px;color:var(--muted)}.section{background:var(--panel);border:1px solid var(--line);border-radius:14px;margin-top:12px;overflow:hidden}.section h2{font-size:14px;margin:0;padding:13px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.buttons{display:flex;gap:8px;flex-wrap:wrap}.btn{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:10px;padding:10px 12px;font-weight:700;text-decoration:none}.btn.primary{border-color:#397a58}.global{display:flex;gap:8px;overflow:auto;padding:12px}.gcard{min-width:120px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px}.pos{color:var(--green)}.neg{color:var(--red)}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:10px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--muted);font-weight:600}.tag{font-weight:800}.LONG{color:var(--green)}.SHORT{color:var(--red)}.PASS{color:var(--muted)}.score{font-size:15px;font-weight:800}.cards{display:none;padding:8px}.card{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:11px;margin:7px 0}.row{display:flex;justify-content:space-between;gap:10px;margin:5px 0}.reason{color:var(--muted);font-size:11px;line-height:1.35;margin-top:8px}.loading{opacity:.6;pointer-events:none}.note{padding:12px 14px;color:var(--muted);font-size:11px;line-height:1.45}.empty{padding:18px;color:var(--muted);text-align:center}.diagnostics{padding:13px 14px;font-size:12px;line-height:1.55}.diagnostics strong{font-size:13px}.diagnostics .error{color:var(--red);white-space:pre-wrap;overflow-wrap:anywhere}.diagnostics .muted{color:var(--muted)}.diagnostics .ok{color:var(--green)}
-@media(max-width:720px){.grid{grid-template-columns:repeat(2,1fr)}table{display:none}.cards{display:block}.title{font-size:20px}.wrap{padding:14px 10px 70px}}
-</style>
-</head>
+:root{color-scheme:dark;--base:#12171c;--panel:#1b232c;--panel2:#222e39;--line:#39444f;--text:#e8edf1;--muted:#9eabb6;--green:#43d29c;--red:#ff7373;--gold:#d6b977}*{box-sizing:border-box}body{margin:0;background:var(--base);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;color:var(--text)}.wrap{max-width:1050px;margin:auto;padding:20px 12px 60px}.header{display:flex;justify-content:space-between;gap:12px;align-items:start}.eyebrow{font-size:11px;letter-spacing:1.8px;color:var(--gold);font-weight:700}.brand{font-size:26px;letter-spacing:.3px;font-weight:800}.sub,.small{color:var(--muted);font-size:12px}.status{border:1px solid var(--line);border-radius:20px;padding:7px 12px;font-size:11px;white-space:nowrap}.warn{color:var(--gold)}.good{color:var(--green)}.bad{color:var(--red)}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:17px}.metric,.section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}.metric b{font-size:22px;display:block;margin-top:5px}.section{margin-top:14px}h2{font-size:14px;margin:0 0 12px;letter-spacing:.35px}table{width:100%;border-collapse:collapse}th{color:var(--muted);font-size:11px;font-weight:600;text-align:left}td{border-top:1px solid var(--line);font-size:12px;padding:11px 8px}th{padding:6px 8px}.tag{font-size:11px;border-radius:6px;padding:4px 6px;background:var(--panel2);font-weight:750}.LONG,.TARGET{color:var(--green)}.SHORT,.STOP{color:var(--red)}.PENDING,.EXPIRED{color:var(--gold)}.OPEN{color:var(--green)}.cards{display:none}.paper{border:1px solid #7e6b42;color:var(--gold);border-radius:8px;padding:8px 10px;font-size:11px;display:inline-block;margin-top:12px}.controls{display:flex;gap:8px;margin-top:11px;flex-wrap:wrap}button,a.btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:8px 12px;border-radius:7px;cursor:pointer;font-weight:600;text-decoration:none;font-size:12px}.note{font-size:11px;color:var(--muted);line-height:1.6;margin-top:11px}.info{border:1px solid var(--line);border-radius:9px;padding:12px;background:var(--panel2);font-size:12px;overflow-wrap:anywhere}.key{color:var(--muted)}.line{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding:7px 0}.line:last-child{border-bottom:0}.c{background:var(--panel2);padding:13px;border:1px solid var(--line);border-radius:9px;margin-bottom:9px}.flex{display:flex;justify-content:space-between;gap:10px}.mid{font-size:12px}.big{font-size:19px;font-weight:800}.mono{font-variant-numeric:tabular-nums}.empty{padding:20px;color:var(--muted);text-align:center}.symbol{font-weight:800}#note{white-space:pre-wrap}@media(max-width:700px){.grid{grid-template-columns:repeat(2,1fr)}.brand{font-size:23px}table{display:none}.cards{display:block}.wrap{padding:14px 10px 64px}}</style></head>
 <body><div class="wrap">
-<div class="top"><div><div class="title">MORNING EDGE <span style="color:var(--gold)">V1.2</span></div><div class="sub">Overnight movement scanner • 15-minute confirmation • $100 paper trades</div></div><div class="pill" id="live">● READY</div></div>
-<div class="grid"><div class="metric"><span class="small">UNIVERSE</span><b id="universe">—</b></div><div class="metric"><span class="small">PAPER SIZE</span><b>$100</b></div><div class="metric"><span class="small">MIN R:R</span><b id="rr">1.5R</b></div><div class="metric"><span class="small">CONFIRMED</span><b id="confirmed">0</b></div></div>
-<div class="buttons"><button class="btn primary" onclick="runScan()">RUN OVERNIGHT SCAN</button><button class="btn" onclick="confirmNow()">RUN 8:45 CONFIRMATION</button><button class="btn" onclick="settleNow()">UPDATE PAPER P/L</button><a class="btn" href="/api/export.csv">EXPORT CSV</a></div>
-<div class="section"><h2>SCANNER STATUS <span class="small">Live diagnostic • errors shown here</span></h2><div class="diagnostics" id="scanStatus" aria-live="polite">Checking server and market data…</div></div>
-<div class="section"><h2>GLOBAL MARKET CONTEXT <span class="small">Latest available daily quotes • may be delayed</span></h2><div class="global" id="globals"><div class="empty">No global snapshot yet.</div></div></div>
-<div class="section"><h2>OVERNIGHT WATCHLIST <span class="small">Top movement candidates — not trades yet</span></h2><table><thead><tr><th>Ticker</th><th>Bias</th><th>Score</th><th>Gap</th><th>PM Move</th><th>Catalyst</th></tr></thead><tbody id="overnightTable"></tbody></table><div class="cards" id="overnightCards"></div></div>
-<div class="section"><h2>8:45 CT CONFIRMED SETUPS <span class="small">Long • Short • Pass</span></h2><table><thead><tr><th>Ticker</th><th>Call</th><th>Score</th><th>Entry</th><th>Stop</th><th>Target</th><th>R:R</th><th>Paper P/L</th></tr></thead><tbody id="confirmTable"></tbody></table><div class="cards" id="confirmCards"></div><div class="note">Stops are placed beyond nearby market structure with an ATR buffer. Targets use the next meaningful support/resistance when it provides enough reward; otherwise the model uses a 2R/ATR expansion target. If the setup cannot clear the risk tests, it passes. No trade is forced just to reach five names.</div></div>
+ <div class="header"><div><div class="eyebrow">ALGORITHMIC STOCK SCANNER</div><div class="brand">MORNING EDGE <span style="color:var(--gold)">V1.3</span></div><div class="sub">Nasdaq / opening range / VWAP / Mag 7 confirmation</div></div><span class="status" id="system">Checking feed</span></div>
+ <div class="paper">PAPER SIMULATOR ONLY — NO LIVE ORDERS</div>
+ <div class="grid">
+  <div class="metric"><span class="small">NET PAPER P/L</span><b class="mono" id="pnl">—</b></div>
+  <div class="metric"><span class="small">COMPLETED</span><b class="mono" id="completed">—</b></div>
+  <div class="metric"><span class="small">OPEN / PENDING</span><b class="mono" id="open">—</b></div>
+  <div class="metric"><span class="small">WIN RATE</span><b class="mono" id="rate">—</b></div>
+ </div>
+ <div class="section"><h2>MARKET DATA STATUS</h2><div class="info" id="feed">Checking the market data connection…</div><div class="note">A signal will never be generated from stale or unavailable price data. VIX/VXN requires a separate licensed data feed and is not used yet.</div></div>
+ <div class="section"><h2>TODAY'S AUTOMATIC PAPER TRADES</h2><div class="cards" id="tradesCards"></div><table><thead><tr><th>STOCK</th><th>DIRECTION</th><th>ENTRY</th><th>STOP</th><th>TAKE PROFIT</th><th>STATUS</th><th>P/L</th></tr></thead><tbody id="tradesTable"></tbody></table><div id="tradesEmpty" class="empty">No paper trades today. A PASS day is a valid outcome.</div></div>
+ <div class="section"><h2>RECENT PAPER HISTORY</h2><div class="cards" id="recentCards"></div><table><thead><tr><th>DATE</th><th>STOCK</th><th>DIRECTION</th><th>STATUS</th><th>P/L</th></tr></thead><tbody id="recentTable"></tbody></table><div id="recentEmpty" class="empty">No completed paper history yet.</div></div>
+ <div class="section"><h2>HOW THE ENGINE MAKES DECISIONS</h2>
+  <div class="line"><span class="key">Opening range</span><b>8:30–8:45 CT</b></div>
+  <div class="line"><span class="key">New signals</span><b>9:00–10:30 CT</b></div>
+  <div class="line"><span class="key">Entry requirement</span><b>Closed 1-min breakout</b></div>
+  <div class="line"><span class="key">Confirmation</span><b>VWAP, volume, QQQ, Mag 7</b></div>
+  <div class="line"><span class="key">Target</span><b>2 × structural risk</b></div>
+  <div class="line"><span class="key">Default trade size</span><b id="size">$100 simulated</b></div>
+  <div class="line"><span class="key">Risk management</span><b id="risk">Max 3 open / 5 daily</b></div>
+  <div class="note">Trades are created only after a fully closed confirmation candle. A subsequent candle must trigger entry. Simulated protective exits begin after entry; if a later candle hits both stop and target, the stop wins. Estimated slippage is included. Real broker fills may be worse, and fractional simulated shares are not proof a real bracket order can be placed for the same dollar amount.</div>
+ </div>
+ <div class="controls"><button type="button" onclick="load()">REFRESH NOW</button><a class="btn" href="/api/health" target="_blank">SERVER HEALTH</a></div>
+ <div class="note" style="margin-top:14px">No automated real brokerage order execution is present or enabled. Do not put brokerage credentials into this page. Configure provider credentials securely as Render environment variables. Paper results are not evidence of a live-market edge until they are collected and audited.</div>
 </div>
 <script>
-const $=id=>document.getElementById(id); const money=x=>x==null?'—':'$'+Number(x).toFixed(2); const pct=x=>x==null?'—':(Number(x)>=0?'+':'')+Number(x).toFixed(2)+'%';
-function cls(x){return Number(x)>=0?'pos':'neg'}
-async function api(url,opt){
-  let r;
-  try{r=await fetch(url,opt)}catch(e){throw new Error('Server connection failed. Check Render service status and logs.')}
-  if(!r.ok){
-    const type=r.headers.get('content-type')||'';
-    let detail='';
-    if(type.includes('application/json')){
-      try{const data=await r.json();detail=String(data.detail||data.error||'').slice(0,260)}catch(e){}
-    }
-    throw new Error(`Server HTTP ${r.status}${detail?': '+detail:''}. ${r.status===502||r.status===503?'Render server unavailable; check Render Logs.':''}`)
-  }
-  return r.json();
-}
-function busy(on){document.body.classList.toggle('loading',on);if(on)$('live').textContent='● REQUESTING'}
-function showScanner(s, nowCT){
- const job=s?.job||{}, last=s?.last_run||{};
- const running=job.state==='running';
- const state=running?'RUNNING':(last.status||'NOT RUN');
- const stale=!!last.started_at && !!nowCT && last.started_at.slice(0,10)!==nowCT.slice(0,10) && !running;
- const ok=state==='completed' && !stale;
- const errors=(running?(job.errors||[]):(last.errors||[])).slice(0,5);
- const err=running?job.error:last.error;
- const prog=running?` • ${job.processed||0}/${job.total||0} tickers checked, ${job.scanned||0} quotes received`:
-   (last.started_at?` • ${last.scanned||0}/${last.universe_count||0} quotes received`:'');
- const time=last.finished_at||last.started_at||'not yet';
- $('scanStatus').replaceChildren();
- const line=document.createElement('div');line.className=ok?'ok':['failed','interrupted'].includes(state)?'error':'muted';
- const hdr=document.createElement('strong');hdr.textContent=`${stale?'STALE (previous day)':state}${prog}`;line.appendChild(hdr);
- $('scanStatus').appendChild(line);
- const more=document.createElement('div');more.className='muted';more.textContent=`Last run: ${time} • Data storage: ${s?.storage||'unknown'}`;$('scanStatus').appendChild(more);
- if(err){const d=document.createElement('div');d.className='error';d.textContent=err;$('scanStatus').appendChild(d);}
- if(errors.length){const d=document.createElement('div');d.className='muted';d.textContent='Sample feed errors: '+errors.join(' | ');$('scanStatus').appendChild(d);}
- if(!last.started_at && !running){const d=document.createElement('div');d.className='muted';d.textContent='No scan has run. Tap RUN OVERNIGHT SCAN or wait for the scheduled morning scan.';$('scanStatus').appendChild(d);}
- $('live').textContent=running?'● SCANNING':ok?'● DATA OK':stale?'● STALE':['failed','interrupted'].includes(state)?'● SCAN ERROR':'● NO SCAN';
-}
-function render(d,status){
- showScanner(status?.scanner,status?.now_ct);
- $('universe').textContent=status?.universe??'—'; $('rr').textContent=(status?.min_rr??1.5)+'R';
- const gs=d.globals||[]; $('globals').innerHTML=gs.length?gs.map(g=>`<div class="gcard"><div class="small">${g.label}</div><b>${g.price?Number(g.price).toFixed(2):'—'}</b><div class="${cls(g.change_pct)}">${pct(g.change_pct)}</div></div>`).join(''):'<div class="empty">Run the overnight scan to load global context.</div>';
- const os=d.overnight||[]; $('overnightTable').innerHTML=os.map(x=>`<tr><td><b>${x.ticker}</b><div class="small">${x.sector||''}</div></td><td class="tag ${x.prelim_bias}">${x.prelim_bias}</td><td class="score">${Number(x.prelim_score||0).toFixed(0)}</td><td class="${cls(x.gap_pct)}">${pct(x.gap_pct)}</td><td class="${cls(x.pm_change_pct)}">${pct(x.pm_change_pct)}</td><td>${x.catalyst_text||'—'}${x.sec_forms?`<div class="small">SEC: ${x.sec_forms}</div>`:''}</td></tr>`).join('');
- $('overnightCards').innerHTML=os.length?os.map(x=>`<div class="card"><div class="row"><b>${x.ticker}</b><span class="tag ${x.prelim_bias}">${x.prelim_bias}</span></div><div class="row"><span>Score ${Number(x.prelim_score||0).toFixed(0)}</span><span>Gap <span class="${cls(x.gap_pct)}">${pct(x.gap_pct)}</span></span></div><div class="row"><span>Premarket</span><span class="${cls(x.pm_change_pct)}">${pct(x.pm_change_pct)}</span></div><div class="reason">${x.catalyst_text||''}</div></div>`).join(''):'<div class="empty">No scan yet.</div>';
- const cs=d.confirmations||[]; const action=cs.filter(x=>x.decision==='LONG'||x.decision==='SHORT'); $('confirmed').textContent=action.length;
- $('confirmTable').innerHTML=cs.map(x=>`<tr><td><b>${x.ticker}</b></td><td class="tag ${x.decision}">${x.decision}</td><td class="score">${Number(x.score||0).toFixed(0)}</td><td>${money(x.entry)}</td><td>${money(x.stop)}</td><td>${money(x.target)}</td><td>${x.rr?Number(x.rr).toFixed(2)+'R':'—'}</td><td class="${cls(x.pnl_dollars||0)}">${x.pnl_dollars==null?'OPEN':money(x.pnl_dollars)}</td></tr>`).join('');
- $('confirmCards').innerHTML=cs.length?cs.map(x=>`<div class="card"><div class="row"><b>${x.ticker}</b><span class="tag ${x.decision}">${x.decision}</span></div><div class="row"><span>Score ${Number(x.score||0).toFixed(0)}</span><span>${x.rr?Number(x.rr).toFixed(2)+'R':'—'}</span></div><div class="row"><span>Entry ${money(x.entry)}</span><span>Stop ${money(x.stop)}</span></div><div class="row"><span>Target ${money(x.target)}</span><span class="${cls(x.pnl_dollars||0)}">${x.pnl_dollars==null?(x.status||'') : money(x.pnl_dollars)}</span></div><div class="reason">${x.reason||''}</div></div>`).join(''):'<div class="empty">Confirmation has not run yet.</div>';
-}
-async function refresh(){try{const s=await api('/api/status');render(s.latest,s)}catch(e){$('live').textContent='● SERVER ERROR';$('scanStatus').textContent='Cannot reach server: '+e.message}}
-async function runScan(){busy(true);try{const res=await api('/api/run-scan',{method:'POST'});await refresh()}catch(e){alert(e.message)}finally{busy(false)}}
-async function confirmNow(){busy(true);try{await api('/api/confirm',{method:'POST'});await refresh()}catch(e){alert(e.message)}finally{busy(false)}}
-async function settleNow(){busy(true);try{await api('/api/settle',{method:'POST'});await refresh()}catch(e){alert(e.message)}finally{busy(false)}}
-refresh(); setInterval(refresh,5000);
+const $=id=>document.getElementById(id);
+const usd=x=>x==null?'—':(x<0?'−':'')+'$'+Math.abs(Number(x)).toFixed(2);
+const px=x=>x==null?'—':'$'+Number(x).toFixed(2);
+const escape=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function tradeCard(t){return `<div class="c"><div class="flex"><div><span class="symbol">${escape(t.ticker)}</span> <span class="tag ${escape(t.side)}">${escape(t.side)}</span></div><span class="tag ${escape(t.status)}">${escape(t.status)}</span></div><div class="flex mid" style="margin-top:8px"><span>Entry ${px(t.entry??t.trigger_price)}</span><span>Stop ${px(t.stop_price)}</span><span>Take ${px(t.target_price)}</span></div><div class="flex" style="margin-top:8px"><span class="small">${escape(t.reasoning||'')}</span><b class="mono ${Number(t.pnl)>=0?'LONG':'SHORT'}">${usd(t.pnl)}</b></div></div>`}
+function recentCard(t){return `<div class="c"><div class="flex"><span>${escape(t.trade_date)} &nbsp; <b>${escape(t.ticker)}</b> <span class="tag ${escape(t.side)}">${escape(t.side)}</span></span><b class="${Number(t.pnl)>=0?'LONG':'SHORT'}">${usd(t.pnl)}</b></div><div class="small">${escape(t.status)}</div></div>`}
+async function load(){try{const r=await fetch('/api/edge',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);const d=await r.json();
+ const p=d.provider||{};const ready=p.status==='running';$('system').textContent=ready?'● FEED ACTIVE':p.status==='market_closed'?'● MARKET CLOSED':p.status==='setup_required'?'● SETUP NEEDED':'● FEED NOT READY';$('system').className='status '+(ready?'good':'warn');
+ $('pnl').textContent=usd(d.realized_pnl);$('pnl').className='mono '+(Number(d.realized_pnl)>=0?'good':'bad');$('completed').textContent=d.completed_count;
+ $('open').textContent=d.open_count+' / '+d.pending_count;$('rate').textContent=d.completed_count?(100*d.wins/d.completed_count).toFixed(0)+'%':'—';
+ $('size').textContent=usd(d.paper_notional)+' simulated';$('risk').textContent=`Max ${d.max_open} open / ${d.max_trades_day} daily`;
+ const info=[`State: ${p.status||'unknown'}`,`Feed: ${escape(d.market_data_feed)} (Alpaca)`,`Keys: ${d.keys_configured?'configured':'not configured'}`,`Last successful fetch: ${p.last_success||'none'}`,`Fresh symbols: ${p.fetched||0}`,`Latest candle: ${p.latest_bar||'none'}`,`Tracking: ${(d.tracked_symbols||[]).join(', ')}`,`Data error: ${p.last_error||'none'}`];$('feed').textContent=info.join('\n');$('feed').style.whiteSpace='pre-line';
+ const ts=d.today||[];$('tradesEmpty').style.display=ts.length?'none':'block';$('tradesCards').innerHTML=ts.map(tradeCard).join('');$('tradesTable').innerHTML=ts.map(t=>`<tr><td class="symbol">${escape(t.ticker)}</td><td class="${escape(t.side)}">${escape(t.side)}</td><td>${px(t.entry??t.trigger_price)}</td><td>${px(t.stop_price)}</td><td>${px(t.target_price)}</td><td class="${escape(t.status)}">${escape(t.status)}</td><td>${usd(t.pnl)}</td></tr>`).join('');
+ const recent=(d.recent_trades||[]).filter(t=>t.pnl!=null).slice(0,20);$('recentEmpty').style.display=recent.length?'none':'block';$('recentCards').innerHTML=recent.map(recentCard).join('');$('recentTable').innerHTML=recent.map(t=>`<tr><td>${escape(t.trade_date)}</td><td>${escape(t.ticker)}</td><td class="${escape(t.side)}">${escape(t.side)}</td><td class="${escape(t.status)}">${escape(t.status)}</td><td>${usd(t.pnl)}</td></tr>`).join('');
+ }catch(err){$('system').textContent='● SERVER ERROR';$('feed').textContent='Unable to read the server: '+err.message;}}
+load();setInterval(load,15000);
 </script></body></html>

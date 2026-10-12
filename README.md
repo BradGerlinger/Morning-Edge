@@ -1,91 +1,64 @@
-# Morning Edge V1.2 (Repair)
+# Morning Edge V1.3 — Forward-only paper scalp scanner
 
-A phone-friendly, paper-only U.S. stock movement scanner.
+**Mode:** Local paper simulator only. No live brokerage execution code. No order-submission code to Alpaca paper brokerage yet. **Do not infer the app is trading in an Alpaca paper account**: it is performing internal paper simulation against retrieved market candles.
 
-## What it does
+## What changed from V1.2
 
-1. **Overnight / premarket scan**
-   - Scans a liquid U.S. stock universe rather than forcing every listed microcap into the model.
-   - Looks at gap size, premarket movement, premarket volume, normal liquidity, sector action, U.S. futures, Asia, and Europe.
-   - Optionally adds recent company news with a Finnhub API key and recent SEC filing context.
-   - Produces a ranked watchlist. This is **not** an entry signal.
+- Added `edge_engine.py`: an independent Nasdaq / stock scan loop using Alpaca market-data REST endpoints instead of Yahoo Finance for the active scanner. The old Yahoo-based functions are retained for historical compatibility, but **not scheduled by default**.
+- Uses completed 1-minute candles from current trading day only and rejects stale data.
+- Computes a 15-minute opening range (9:30–9:44 ET, 8:30–8:44 CT).
+- Looks for a *fresh* break above/below the range after 10:00 ET (9:00 CT), with VWAP, relative minute volume, QQQ direction and at least 4/7 Mag7 stocks agreeing.
+- At the first valid signal, creates a `PENDING` simulated order, **not an automatic fill at the old bar close**. Next bars may trigger an entry. Orders expire within roughly 4 minutes if never triggered.
+- Simulates a structural stop beyond the opening range and a 2R take profit, using a configurable 5 bps per-side fill-friction assumption by default. On an entry candle that also reaches the stop, counts a stop. If a later candle touches stop and target, counts a stop first.
+- Records simulated entries/exits and P/L in SQLite with one signal per symbol per trading date and caps on positions, trades/day, realized daily loss.
+- Rebuilt the mobile dashboard showing feed state and individual PENDING, OPEN, TARGET, STOP, EXPIRED paper-trade statuses.
+- Explicitly marks that VIX/VXN is not integrated, and does not pretend it contributes to any entry.
 
-2. **8:45 AM Central confirmation**
-   - Waits through the first 15 minutes after the U.S. cash open.
-   - Re-ranks using opening-range position, VWAP, first-15-minute relative volume, and short-term direction.
-   - Labels each candidate **LONG**, **SHORT**, or **PASS**.
-   - It can reverse the overnight bias if the open clearly says the opposite.
-   - It will return fewer than five setups if fewer than five qualify.
+## Caveats
 
-3. **Market-based stop and target**
-   - Stop is placed beyond nearby support/resistance with an ATR buffer.
-   - Target uses the next meaningful market level when that level gives enough reward.
-   - If the nearby level is too close, the model uses a 2R / ATR expansion target.
-   - Setup passes when R:R is below 1.5, risk is too wide, or the stop is unrealistically tight.
+- This is a **prototype**, not a validated strategy. It has not been tested against an Alpaca account or live market-data provider from this development environment. It passes deterministic offline tests.
+- Alpaca Basic real-time IEX feed is a **single-exchange subset**, not a consolidated tape. Signals using IEX bars may differ materially from full-market SIP price, volume or VWAP. **Do not promote this strategy to live trading without consolidated licensed quotes, proper position reconciliation, and out-of-sample testing**.
+- Paper fills use 1-minute OHLC bars; ordering inside one minute is unknown and results can be wrong even with conservative handling. Spread, market impact, short locate/borrow availability, broker rejects, halts, and real execution differences are not fully modeled. Five basis points is an illustrative setting, not a measurement of actual friction.
+- Local paper stops and targets are **not actual protective broker orders**. If the process stops or the data feed fails, an open simulated position may not be updated until quotes return. Real broker bracket orders are a **future milestone**, requiring separate verification and authorization.
+- Simulator permits fractional shares to keep positions at $100. Real broker advanced orders for fractional positions may be restricted; never assume these would be accepted as bracket orders.
+- This one-minute REST polling version is a testbed, not a low-latency scalper. Request/processing delays can miss breakouts; future production design should use streaming quotes and actual bid/ask spreads.
+- Dashboard is **read-only**, but publicly deployed Render URLs can expose simulated trade records if left public. Add authentication before connecting any actual brokerage system.
+- Run **one server worker/Render replica only** and use a persistent SQLite volume or a durable database. Multiple replicas may create competing schedulers and shared-database contention. Without a persistent disk, trade history disappears after Render instance replacement.
 
-4. **$100 paper trade**
-   - Every qualifying setup uses $100 notional for clean comparison.
-   - It logs entry, stop, target, shares, result, and dollar P/L.
-   - If stop and target both appear inside the same 1-minute candle, the logic is intentionally conservative: it counts the stop first.
+## Setup
 
-## Data source notes
+1. Deploy to the existing Render web service from the repo root. Keep Python `3.12.10`. Build command: `pip install -r requirements.txt`.
+2. Start command: `uvicorn server:app --host 0.0.0.0 --port $PORT --loop asyncio --http h11`.
+3. In Render > Environment, add **ALPACA_KEY_ID** and **ALPACA_SECRET_KEY**. Prefer paper credentials. Do **not** send these keys to chat, place them in GitHub, or embed them in HTML.
+4. Leave `ALPACA_DATA_FEED=iex` unless entitled to SIP coverage. This feed is for development, not a proven execution-grade consolidated scanner.
+5. `MORNING_EDGE_DB=/var/data/morning_edge.db` only if `/var/data` is actually a mounted Render persistent disk. Back up the old database first. SQLite migration adds a separate `edge_trades` table; does not wipe historic records.
+6. Visit the deployed URL: dashboard must display `V1.3` and `PAPER SIMULATOR ONLY`. Check the market-data state during regular market hours (8:30 AM to 3 PM CT weekdays). If keys fail, it will show `SETUP NEEDED` or `FEED NOT READY` and **not invent any trade**.
+7. Monitor multiple weeks of forward paper data and export/query SQLite before considering a broker API for simulated bracket orders. Unit tests: `python -m pytest -q test_edge_engine.py test_repair.py` (pytest is a development-only dependency).
 
-The zero-key price feed uses Yahoo Finance chart endpoints. It is useful for research and paper testing but it is not an exchange-grade execution feed. For production trading, replace it with your broker or a licensed real-time market-data feed.
+## Default controls
 
-News scoring is optional and uses Finnhub if `FINNHUB_API_KEY` is set. SEC checks use official SEC submissions data and a descriptive `SEC_USER_AGENT`.
+```
+ALPACA_DATA_FEED=iex
+EDGE_SYMBOLS=NVDA,TSLA,AAPL,MSFT,AMZN,META,GOOGL,AMD,QQQ
+EDGE_PAPER_NOTIONAL=100
+EDGE_MAX_TRADES_DAY=5
+EDGE_MAX_OPEN=3
+EDGE_DAILY_LOSS_CUTOFF=10
+EDGE_MIN_VOLUME_MULT=1.2
+EDGE_SLIPPAGE_BPS=5
+EDGE_LEGACY_SCANNER_ENABLED=0
+```
 
-## Diagnostic improvements (V1.1)
+## Trade engine overview
 
-The new **SCANNER STATUS** panel reports running/completed/failed state, attempted
-symbols, successful quotes, sample provider failures, and database storage mode.
-A missing watchlist is no longer represented as a completed scan with zero stocks.
-The manual scan is non-blocking and status refreshes every five seconds.
+- Fetches 1-minute completed bars from Alpaca's documented data endpoint once/minute, using a small bounded thread pool.
+- No signal before 9:00 CT, no new entry signal at/after 10:30 CT; paper open positions are checked through 3:10 PM CT while feed works. Intended EOD liquidation is 3:00 PM CT if price data is available.
+- Never fabricate signals when API keys, fresh QQQ data, or a minimum number of Mag7 confirmations are missing.
+- Backend endpoints: `GET /api/edge` for current paper summary and `GET /api/health` for server health. Previous V1.2 diagnostic API remains in the codebase; it does not run automatically unless `EDGE_LEGACY_SCANNER_ENABLED=1`.
 
-**External-feed limitation:** Yahoo Finance's unofficial chart endpoint may return
-HTTP 429/403, especially from cloud hosting. That cannot be resolved reliably by
-changing scoring filters or buying more RAM. A suitable licensed stock-data
-provider may be necessary. Scans are research/paper-only.
+## Next milestone before any broker automation
 
-## Deploy on Render
-
-1. Unzip this folder and upload all files to a new GitHub repository.
-2. Create a new **Web Service** in Render from that repository.
-3. Build command: `pip install -r requirements.txt`
-4. Start command: `uvicorn server:app --host 0.0.0.0 --port $PORT`
-5. Check the new scanner status panel and API `/api/health` after deployment.
-6. For data across restarts, attach a persistent disk at `/var/data` and set
-   `MORNING_EDGE_DB=/var/data/morning_edge.db` (check pricing and back up old data).
-   A paid always-on instance alone does not make the local SQLite DB persistent.
-7. Optional environment variables are shown in `.env.example`.
-8. See `DEPLOY_STEPS.txt` for step-by-step repair installation.
-
-## Timing
-
-- Background scan window: roughly 4:00–8:25 AM Central on weekdays.
-- Automatic confirmation: 8:45 AM Central.
-- Paper positions update through the day.
-
-## Important design choice
-
-The app intentionally does **not** promise to scan literally every U.S. ticker with a free feed. That would add thousands of illiquid/microcap names and rate-limit the data source. V1 starts with a liquid universe because the goal is tradable movement and clean paper-test results. You can override the list with `SCAN_TICKERS`.
-
-
-V1.2 - SERVER CRASH ISOLATION (OCT 9, 2026)
-- Runs quote scanning in a separate subprocess. If scanner hits a native-library
-  segmentation fault, it should no longer terminate the web server process.
-- Writes scan progress to SQLite regularly and reports isolated scanner exit codes.
-- Scans STOCK TICKERS FIRST so the 0/74 indicator means the app really has attempted
-  quote requests; global and sector references no longer block ticker scanning.
-- Performs a one-symbol Yahoo access test before launching 74 per-symbol fetches;
-  if Yahoo is blocked (403/429/DNS), displays that failure instead of hanging.
-- Dashboard no longer prints Render's huge HTML 502 response as raw text;
-  it displays a concise HTTP status message.
-- Enables Python faulthandler tracebacks for lower-level Python/native crashes.
-- Does not solve vendor feed restrictions, nor ensure strategy profitability.
-- Still uses temporary disk by default; configure a Render persistent disk
-  after stabilizing, or historical trade data may vanish on a deploy/restart.
-
-VALIDATION: Eight offline unit tests passed. A local server integration check
-confirmed that the dashboard API remained healthy after the scan worker failed
-on an intentionally inaccessible upstream. Yahoo live data was NOT validated
-in Render; the feed may require replacement with a licensed API.
+- Establish that the data provider is stable on Render (freshness monitoring and reconnect behavior).
+- Compare this trial strategy with a base opening-range rule using multiple market regimes and out-of-sample forward tests; look at net P/L, profit factor, max drawdown, per-symbol performance and execution assumptions.
+- Integrate a **paper brokerage** with supported whole-share bracket orders. Verify API order acknowledgments, fills, conditional exits, cancel/replace, orphan positions, duplicate prevention, trading halts and network failures. Do not use live credentials.
+- Only after separate user approval, verified broker constraints and account risk limits should any live execution feature be considered.

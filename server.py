@@ -21,10 +21,11 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
+import edge_engine
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 
-APP_NAME = "Morning Edge V1"
+APP_NAME = "Morning Edge V1.3 Paper"
 CT = ZoneInfo("America/Chicago")
 ET = ZoneInfo("America/New_York")
 ROOT = Path(__file__).resolve().parent
@@ -809,6 +810,13 @@ def latest_candidates() -> Dict[str,Any]:
 def _worker() -> None:
     global _last_auto_bucket
     while True:
+        # V1.3 uses the licensed Alpaca feed and forward-only simulator by default.
+        # The previous Yahoo scanner remains in the codebase for audit but is not
+        # scheduled because it frequently fails with 403/429 on Render.
+        if os.getenv("EDGE_LEGACY_SCANNER_ENABLED", "0") != "1":
+            edge_engine.poll()
+            time.sleep(60)
+            continue
         try:
             n=now_ct()
             if n.weekday()<5:
@@ -849,6 +857,7 @@ app=FastAPI(title=APP_NAME)
 @app.on_event("startup")
 def startup():
     init_db()
+    edge_engine.init_db()
     with _db_lock:
         c=db_conn()
         c.execute("UPDATE scan_runs SET status='interrupted',finished_at=?,error='Server restarted before scan completed' WHERE status='running'", (now_ct().isoformat(),))
@@ -857,6 +866,10 @@ def startup():
 
 @app.get("/")
 def home(): return FileResponse(ROOT/"index.html")
+
+@app.get("/api/edge")
+def edge_status():
+    return edge_engine.summary()
 
 @app.get("/api/status")
 def status():
@@ -869,7 +882,7 @@ def api_scan():
 
 @app.get("/api/health")
 def health():
-    return {"ok":True,"app":APP_NAME,"scanner":scan_state()}
+    return {"ok":True,"app":APP_NAME,"scanner":scan_state(),"edge_status":edge_engine.LAST["status"],"live_trading_enabled":False}
 
 @app.post("/api/confirm")
 def api_confirm():

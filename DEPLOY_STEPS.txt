@@ -1,56 +1,44 @@
-MORNING EDGE V1.2 - CRASH ISOLATION REPAIR PACKAGE
+MORNING EDGE V1.3 — PAPER SCALPING UPGRADE
 
-WHAT CHANGED
-- Dashboard displays live scanner status, partial progress, sample quote errors, and last attempt.
-- Overnight scan runs in a background thread and rejects duplicate requests.
-- Handles failures explicitly instead of showing an empty watchlist as a successful scan.
-- Stops treating yesterday's intraday candles as today's premarket data.
-- Bounded network concurrency (3 workers), limited expensive news/SEC enrichment.
-- 8:45 CT opening range does not include the not-yet-complete 09:45 Eastern candle.
-- Conservative Python stack: Uvicorn with standard-library asyncio/h11; Python 3.12 specified.
-- Does not expose Python files or other application files through an assets URL.
+IMPORTANT: This is an automatic LOCAL PAPER simulator, not actual broker order placement.
+It does NOT place live trades, and it does not send orders to Alpaca's paper broker.
 
-TO UPDATE YOUR EXISTING GITHUB + RENDER SERVICE
-1. Save / extract this ZIP on your computer (or iPhone Files app).
-2. In the GitHub repository connected to Render, upload the extracted files into
-   the repository root, replacing the existing files with the same names. Do NOT
-   upload the ZIP itself to the repository expecting Render to run it.
-3. Do NOT upload any .db file, .env, private API keys or __pycache__ directory.
-4. In Render > Morning-Edge > Settings verify:
-   Build command: pip install -r requirements.txt
-   Start command: uvicorn server:app --host 0.0.0.0 --port $PORT --loop asyncio --http h11
-5. Redeploy AFTER the file changes are committed. Wait for the deployment to finish.
-6. Open the Morning-Edge website. Look for the new SCANNER STATUS panel.
-7. Tap RUN OVERNIGHT SCAN and watch the counter. Allow several minutes for 80+ symbols.
-8. If it says FEED ERROR, screenshot that panel and the Render logs. The actual reason
-   (e.g., Yahoo HTTP 429) will be visible. Do NOT pay for more server RAM to fix a 429.
+STEP 1 — REPLACE CODE IN THE EXISTING REPO
+1. Download Morning_Edge_V1_3_Paper_Scalper.zip.
+2. Unzip it using Files on the iPhone or a computer.
+3. Open the GitHub repository connected to your existing Morning Edge Render app.
+4. Upload the unzipped files to the ROOT of the repository, replacing files of the same name.
+   Make sure the NEW edge_engine.py file is uploaded too.
+5. Do not upload the ZIP itself as the only repository file. Do not upload a .env or database.
 
-IMPORTANT LIMITATIONS
-- Yahoo Finance chart data is an unofficial no-key upstream. This package cannot
-  guarantee that Yahoo returns premarket candles to Render's server. A reliable,
-  documented market-data provider may still be required for daily trading.
-- A scanner job labeled completed means quotes were successfully read; it does NOT
-  prove the trading strategy will be profitable. Entries remain paper-only.
-- If you're scanning outside US premarket hours or on holidays, a zero-candidate
-  error is expected. We intentionally do not present yesterday's stocks as live.
-- Database defaults to temporary storage unless a persistent disk is attached.
-  To retain data overnight through deploy/restarts, attach a Render persistent
-  disk mounted at /var/data, set MORNING_EDGE_DB=/var/data/morning_edge.db,
-  and confirm it is mounted. A disk may incur extra charges. First BACK UP any
-  data from the running instance; changing DB paths does not migrate past data.
-- This ZIP deliberately EXCLUDES the original morning_edge.db file to prevent
-  accidentally overwriting live results. You may have an older DB tracked in
-  your existing GitHub repository; remove it only after preserving needed data.
-- Live data access and Render runtime availability could not be tested from this
-  offline environment. Automated tests use controlled sample responses.
+STEP 2 — ADD ALPACA DATA KEYS
+1. Obtain credentials from your Alpaca account (paper credentials recommended).
+2. In Render, open the Morning Edge service > Environment.
+3. Add ALPACA_KEY_ID and ALPACA_SECRET_KEY as separate SECRET environment variables.
+4. Set ALPACA_DATA_FEED = iex (development feed; SIP needs an eligible plan).
+5. Never paste credentials in ChatGPT, GitHub, or your browser source code.
 
-V1.2 DETAILS:
-- After deployment, confirm the header says V1.2. If it still says V1,
-  cached HTML or the old commit is being served.
-- Wait for the service to finish deploying before tapping the scan button.
-- On scan failure, the status now tells you whether Yahoo is blocked,
-  the scanner process died, or the market has no current-day premarket bars.
-- Do not upgrade Render memory yet. If a new 502 occurs without an active
-  scan, screenshot the instance termination message and Python crash logs.
-- If 0 quotes due to Yahoo 429/403, the stock-data provider needs replacement;
-  rebuilding the same scanner won't unlock that data feed.
+STEP 3 — REDEPLOY
+1. Render Settings: Python build command = pip install -r requirements.txt.
+2. Start command = uvicorn server:app --host 0.0.0.0 --port $PORT --loop asyncio --http h11.
+3. Use a single Render instance/worker. If using a persistent disk, mount /var/data.
+4. Once deployed, visit the EXISTING app URL, not a second app.
+5. Header must say MORNING EDGE V1.3 and PAPER SIMULATOR ONLY.
+6. FEED STATUS should say RUNNING during market hours; market closed after hours.
+7. If it says SETUP NEEDED, the data keys are absent. If it says DATA ERROR,
+   open SERVER HEALTH and examine Render Logs (never reveal credentials).
+
+WHAT IT WILL DO ON MARKET DAYS
+- 8:30–8:45 Central: build the first-15-minute opening range from fresh stock bars.
+- 9:00–10:30 Central: watch for confirmed one-minute breakouts or breakdowns.
+- Record PENDING signals; simulate entry only on later bars, with automatic stop/target.
+- Show P/L from paper entries and exits, not from imaginary fills on earlier candles.
+
+CAUTIONS
+- The FREE IEX market-data feed is not full-market data. This prototype has passed
+  OFFLINE tests, not a live connection test. Do not assume returns are profitable.
+- Database in /tmp WILL be lost on service replacement. Attach a persistent disk
+  before depending on multi-day results. Changing paths does not copy the old DB.
+- VIX/VXN is NOT integrated yet.
+- Real money trading is HARD-DISABLED.
+- No real broker bracket orders (paper or live) have been configured at this stage.
