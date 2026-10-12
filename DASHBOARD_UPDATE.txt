@@ -1,0 +1,17 @@
+MORNING EDGE — GREEN DASHBOARD UPDATE
+
+This package updates the mobile dashboard in index.html and adds one static image route in server.py for the existing tracker-bull.png artwork.
+
+The Alpaca scanner, trade decision engine, paper-trading simulator, risk settings, and API contract are unchanged.
+
+The dashboard reads /api/edge every 15 seconds. Watchlist signals reflect actual paper trades only; other stocks show PASS / MONITORING, not invented recommendations. QQQ trend, Mag 7 breadth, and VIX are explicitly marked unavailable because /api/edge does not currently expose verified live values for them. No chart or price is fabricated.
+
+The displayed P/L is realized paper P/L for the current trading day. The application does not execute real brokerage orders.
+
+DEPLOY:
+1. Upload the updated files to the existing GitHub repository (preserve directory structure).
+2. Let Render redeploy from the connected branch.
+3. Refresh the app on the phone. If the old dashboard persists, remove/re-add the home-screen shortcut or clear the website data because a service worker may cache the old index.
+4. Check Scanner tab for the live Alpaca feed status. Dashboard appearance does not repair missing Alpaca credentials or provider connectivity.
+
+TESTS: 13 existing Python tests passed locally. No live Render deployment or market-data verification performed.

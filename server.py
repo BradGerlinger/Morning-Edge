@@ -867,6 +867,9 @@ def startup():
 @app.get("/")
 def home(): return FileResponse(ROOT/"index.html")
 
+@app.get("/tracker-bull.png")
+def bull_art(): return FileResponse(ROOT/"tracker-bull.png", media_type="image/png")
+
 @app.get("/api/edge")
 def edge_status():
     return edge_engine.summary()
